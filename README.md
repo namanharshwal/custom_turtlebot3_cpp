@@ -222,7 +222,7 @@ Because the robot moves only $5\text{ mm}$ between consecutive scans, sequential
 The Bosch BNO055 internal sensor fusion outputs an orientation quaternion in an aerospace NED frame (clockwise-positive yaw, $+Z$ pointing downwards). Feeding this directly into differential drive odometry causes heading to rotate clockwise when the physical robot turns counter-clockwise (left), shearing walls by $2 \times \theta$.
 
 In [`arduino_bridge.cpp`](src/custom_bot_cpp/src/arduino_bridge.cpp), the delta heading is inverted and normalized to strictly adhere to **ROS REP 103** ($+Z$ pointing upward, CCW positive):
-$$\Delta \theta_{\text{raw}} = \text{atan2}\left(2(q_w q_z + q_x q_y), 1 - 2(q_y^2 + q_z^2)\right) - \theta_{\text{prev\_raw}}$$
+$$\Delta \theta_{\text{raw}} = \text{atan2}\left(2(q_w q_z + q_x q_y), 1 - 2(q_y^2 + q_z^2)\right) - \theta_{\text{raw,prev}}$$
 $$\Delta \theta = -\Delta \theta_{\text{raw}} \quad \text{(Strict REP 103 Inversion)}$$
 $$\theta = \text{atan2}(\sin(\theta + \Delta \theta), \cos(\theta + \Delta \theta))$$
 
