@@ -18,7 +18,6 @@ project(custom_bot_nav_cpp)
 find_package(ament_cmake REQUIRED)
 
 install(DIRECTORY
-  launch
   config
   maps
   DESTINATION share/${PROJECT_NAME}

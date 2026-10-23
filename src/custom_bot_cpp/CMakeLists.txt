@@ -25,10 +25,12 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # ── Dependencies ──────────────────────────────────────────────
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(rclcpp_action REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
+find_package(nav2_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
@@ -92,12 +94,60 @@ target_link_libraries(object_detector_node
   ${OpenCV_LIBS}
 )
 
+# ── 5. robot_full_launcher (C++ Hardware Orchestrator) ────────
+add_executable(robot_full_launcher
+  src/robot_full_launcher.cpp
+)
+ament_target_dependencies(robot_full_launcher
+  ament_index_cpp
+)
+
+# ── 6. slam_launcher (C++ SLAM Orchestrator) ──────────────────
+add_executable(slam_launcher
+  src/slam_launcher.cpp
+)
+ament_target_dependencies(slam_launcher
+  ament_index_cpp
+)
+
+# ── 7. autonomous_mapping_launcher (C++ Mapping Master) ───────
+add_executable(autonomous_mapping_launcher
+  src/autonomous_mapping_launcher.cpp
+)
+ament_target_dependencies(autonomous_mapping_launcher
+  ament_index_cpp
+)
+
+# ── 8. full_navigation_launcher (C++ Navigation Master) ───────
+add_executable(full_navigation_launcher
+  src/full_navigation_launcher.cpp
+)
+ament_target_dependencies(full_navigation_launcher
+  ament_index_cpp
+)
+
+# ── 9. waypoint_navigator (C++ Nav2 Action Client) ────────────
+add_executable(waypoint_navigator
+  src/waypoint_navigator.cpp
+)
+ament_target_dependencies(waypoint_navigator
+  rclcpp
+  rclcpp_action
+  geometry_msgs
+  nav2_msgs
+)
+
 # ── Install Executables ────────────────────────────────────────
 install(TARGETS
   arduino_bridge
   simple_explorer
   teleop_key_hold
   object_detector_node
+  robot_full_launcher
+  slam_launcher
+  autonomous_mapping_launcher
+  full_navigation_launcher
+  waypoint_navigator
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -108,7 +158,6 @@ install(DIRECTORY
 )
 
 install(DIRECTORY
-  launch
   description
   config
   models
