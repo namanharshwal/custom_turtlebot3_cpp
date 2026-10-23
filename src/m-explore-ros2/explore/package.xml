@@ -1,0 +1,44 @@
+<?xml version="1.0"?>
+<!--
+==============================================================================
+Creator & Maintainer: Naman Harshwal (namanharshwal@gmail.com)
+Owner/Supervisor:     Pradeep Singh Chauhan
+Workspace:            psnh_turtlebot_cpp_ws
+License:              Apache License 2.0 (c) 2026 Naman Harshwal
+
+Description: Custom TurtleBot Burger 2.0 robotics and autonomous navigation stack.
+==============================================================================
+-->
+
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>explore_lite</name>
+  <version>1.0.0</version>
+
+  <description>Lightweight 100% C++ frontier-based exploration ROS2 node.</description>
+
+  <author email="candres.alv@gmail.com">Carlos Alvarez</author>
+  <maintainer email="namanharshwal@gmail.com">Naman Harshwal</maintainer>
+  <license>BSD</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+  <depend>explore_lite_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>map_msgs</depend>
+  <depend>nav2_costmap_2d</depend>
+  <depend>nav2_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>rclcpp</depend>
+  <depend>std_msgs</depend>
+  <depend>tf2</depend>
+  <depend>tf2_ros</depend>
+  <depend>visualization_msgs</depend>
+  <depend>ament_index_cpp</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

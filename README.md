@@ -102,58 +102,78 @@ The C++ computer vision node captures packed MIPI RAW10 frames over CSI, execute
 
 ## 🏗️ 100% Native C++ Executable Architecture & Catalog
 
-Every component in this repository is built using CMake 3.8+ and compiles to a native C++ ELF machine binary. There are **zero Python runtime scripts** in this workspace:
+Every component in this repository is built using Modern C++17 and CMake 3.16+ and compiles to a native C++ ELF machine binary. There are **zero Python runtime scripts, zero .ino firmware files, and zero .xacro macros** in this workspace:
 
 ```
 psnh_turtlebot_cpp_ws/
-├── CMakeLists.txt                         # Top-level workspace build configuration
 ├── LICENSE                                # Apache License 2.0
-├── README.md                              # This master documentation manual
+├── README.md                              # Master engineering manual & derivations
 ├── .gitignore                             # Excludes build/, install/, log/, and system caches
 ├── maps/                                  # Production room SLAM occupancy grid
 │   ├── room_map.yaml                      # Map metadata and thresholds
 │   └── room_map.pgm                       # High-resolution occupancy grid image
+├── docs/                                  # Master technical reports & calculations
+│   ├── ENGINEERING_CALCULATIONS.md        # Comprehensive mathematical derivations
+│   ├── HARDWARE_HARNESSING.md             # Harnessing, schematics & electrical specs
+│   └── images/                            # Live system telemetry & RViz2 proof
 ├── src/
-│   ├── custom_bot_cpp/
+│   ├── custom_bot_cpp/                    # Core robot stack, vision & supervisors
 │   │   ├── CMakeLists.txt                 # C++17 build rules (-O3 optimization)
 │   │   ├── package.xml                    # C++ ROS 2 package manifest
 │   │   ├── arduino_firmware/
 │   │   │   └── custom_bot_motor_encoder/
-│   │   │       ├── custom_bot_motor_encoder.cpp # C++ Arduino MCU firmware
+│   │   │       ├── custom_bot_motor_encoder.cpp # Native C++ Arduino MCU firmware
 │   │   │       └── custom_bot_motor_encoder.hpp # Firmware function prototypes
-│   │   ├── config/
-│   │   │   ├── ekf.yaml                   # Robot localization filter parameters
-│   │   │   ├── nav2.rviz                  # Optimized Navigation 2 RViz display
-│   │   │   └── slam_toolbox_params.yaml   # Ceres scan-matcher SLAM tuning
+│   │   ├── config/                        # SLAM Toolbox, EKF, and RViz parameters
 │   │   ├── description/
 │   │   │   ├── robot.urdf                 # Static URDF kinematic robot definition
 │   │   │   └── meshes/                    # High-fidelity CAD 3D STL models
-│   │   ├── include/custom_bot_cpp/
-│   │   │   ├── arduino_bridge.hpp         # Hardware UART communication header
-│   │   │   ├── object_detector_node.hpp   # Computer vision & YOLO inference header
-│   │   │   ├── process_launcher.hpp       # Native POSIX process supervisor header
-│   │   │   ├── robot_description.hpp      # C++ embedded raw string URDF definition
-│   │   │   ├── simple_explorer.hpp        # Autonomous reactive exploration header
-│   │   │   └── teleop_key_hold.hpp        # Non-blocking terminal teleoperation header
-│   │   ├── models/
-│   │   │   ├── coco.names                 # 80 standard COCO dataset class labels
-│   │   │   ├── yolov4-tiny.cfg            # Darknet convolutional neural network config
-│   │   │   └── yolov4-tiny.weights        # Trained YOLOv4-tiny weights binary (24MB)
+│   │   ├── include/custom_bot_cpp/        # C++ header declarations
+│   │   ├── models/                        # Darknet YOLOv4-tiny weights & cfg
+│   │   └── src/                           # Native C++ executables & process supervisors
+│   ├── custom_bot_nav_cpp/                # Nav2 autonomous navigation configuration
+│   │   ├── CMakeLists.txt                 # Navigation package build rules
+│   │   ├── package.xml                    # Nav2 configuration package manifest
+│   │   └── config/nav2_params.yaml        # Costmaps, DWB controller & planner tuning
+│   ├── diffdrive_arduino/                 # ros2_control differential drive hardware plugin
+│   │   ├── CMakeLists.txt                 # Modern C++17 library & launcher build rules
+│   │   ├── package.xml                    # Hardware interface manifest
+│   │   ├── diffdrive_arduino.xml          # ros2_control pluginlib export
+│   │   ├── hardware/                      # C++ hardware interface (diffbot_system.cpp)
+│   │   ├── description/urdf/diffbot.urdf  # Static pure URDF (zero xacro)
 │   │   └── src/
-│   │       ├── arduino_bridge.cpp         # Native C++ hardware serial bridge
-│   │       ├── object_detector_node.cpp   # Native C++ Bayer unpacker & YOLO engine
-│   │       ├── simple_explorer.cpp        # Native C++ reactive room explorer
-│   │       ├── teleop_key_hold.cpp        # Native C++ non-blocking keyboard teleop
-│   │       ├── robot_full_launcher.cpp    # Native C++ hardware stack supervisor
-│   │       ├── slam_launcher.cpp          # Native C++ SLAM Toolbox orchestrator
-│   │       ├── autonomous_mapping_launcher.cpp # Native C++ full mapping master
-│   │       ├── full_navigation_launcher.cpp    # Native C++ Nav2 navigation master
-│   │       └── waypoint_navigator.cpp     # Native C++ Nav2 Action Client
-│   └── custom_bot_nav_cpp/
-│       ├── CMakeLists.txt                 # Navigation package build rules
-│       ├── package.xml                    # Nav2 configuration package manifest
-│       └── config/
-│           └── nav2_params.yaml           # Costmaps, DWB controller & planner tuning
+│   │       ├── diffbot_launcher.cpp       # Native C++ ros2_control process supervisor
+│   │       └── view_robot_launcher.cpp    # Native C++ visual model inspector launcher
+│   ├── serial/                            # Low-latency C++ serial communication library
+│   │   ├── CMakeLists.txt                 # C++ serial library build rules
+│   │   ├── package.xml                    # Serial library package manifest
+│   │   ├── include/serial/                # Cross-platform serial headers
+│   │   ├── src/                           # POSIX termios serial implementation
+│   │   └── tests/proof_of_concepts/
+│   │       └── cpp_serial_test.cpp        # Native C++ serial communication test utility
+│   ├── ydlidar_ros2_driver/               # 100% C++ device driver for YDLidar X2
+│   │   ├── CMakeLists.txt                 # C++17 LiDAR driver & launcher build rules
+│   │   ├── package.xml                    # Driver package manifest
+│   │   ├── params/                        # Sensor configurations (X2, G2, etc.)
+│   │   └── src/
+│   │       ├── ydlidar_ros2_driver_node.cpp   # C++ ROS 2 LiDAR driver node
+│   │       ├── ydlidar_ros2_driver_client.cpp # C++ LiDAR client
+│   │       ├── ydlidar_launcher.cpp           # Native C++ LiDAR process launcher
+│   │       └── ydlidar_view_launcher.cpp      # Native C++ LiDAR + RViz2 launcher
+│   └── m-explore-ros2/                    # Autonomous frontier-based exploration
+│       ├── explore/ (explore_lite)
+│       │   ├── CMakeLists.txt             # C++ frontier exploration build rules
+│       │   ├── package.xml                # explore_lite package manifest
+│       │   ├── config/params.yaml         # Frontier exploration tuning parameters
+│       │   └── src/
+│       │       ├── explore.cpp            # Main C++ exploration node
+│       │       ├── costmap_client.cpp     # C++ Nav2 costmap client
+│       │       ├── frontier_search.cpp    # C++ wavefront frontier detection
+│       │       └── explore_launcher.cpp   # Native C++ exploration process launcher
+│       └── explore_lite_msgs/             # ROS 2 message interface definitions
+│           ├── CMakeLists.txt             # Interface generation build rules
+│           ├── package.xml                # Message package manifest
+│           └── msg/ExploreStatus.msg      # Exploration state message definition
 ```
 
 ---
@@ -327,6 +347,31 @@ ros2 run custom_bot_cpp waypoint_navigator
 ```bash
 ros2 run custom_bot_cpp teleop_key_hold
 ```
+
+### 7. Launch Additional Drivers & C++ Subsystems
+* **YDLidar X2 C++ Process Launcher**:
+  ```bash
+  ros2 run ydlidar_ros2_driver ydlidar_launcher
+  # Or with integrated RViz2 view:
+  ros2 run ydlidar_ros2_driver ydlidar_view_launcher
+  ```
+
+* **DiffBot `ros2_control` Hardware Stack (100% C++)**:
+  ```bash
+  ros2 run diffdrive_arduino diffbot_launcher
+  # Or model inspector:
+  ros2 run diffdrive_arduino view_robot_launcher
+  ```
+
+* **Explore Lite Autonomous Frontier Exploration (100% C++)**:
+  ```bash
+  ros2 run explore_lite explore_launcher
+  ```
+
+* **C++ Serial Communication Diagnostic Test**:
+  ```bash
+  ros2 run serial cpp_serial_test /dev/ttyUSB0
+  ```
 
 ---
 

@@ -1,0 +1,32 @@
+# ==============================================================================
+# Creator & Maintainer: Naman Harshwal (namanharshwal@gmail.com)
+# Owner/Supervisor:     Pradeep Singh Chauhan
+# Workspace:            psnh_turtlebot_ws
+# License:              Apache License 2.0 (c) 2026 Naman Harshwal
+#
+# Description: Custom TurtleBot Burger 2.0 robotics and autonomous navigation stack.
+# ==============================================================================
+
+ydlidar_ros2_driver_node:
+  ros__parameters:
+    port: /dev/ttyUSB0
+    frame_id: laser_frame
+    ignore_array: ""
+    baudrate: 512000
+    lidar_type: 1
+    device_type: 0
+    sample_rate: 18
+    abnormal_check_count: 4
+    fixed_resolution: true
+    reversion: true
+    inverted: true
+    auto_reconnect: true
+    isSingleChannel: false
+    intensity: false
+    support_motor_dtr: false
+    angle_max: 180.0
+    angle_min: -180.0
+    range_max: 25.0
+    range_min: 0.1
+    frequency: 10.0
+    invalid_range_is_inf: false

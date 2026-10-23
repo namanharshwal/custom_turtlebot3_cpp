@@ -1,0 +1,96 @@
+// ==============================================================================
+// Creator & Maintainer: Naman Harshwal (namanharshwal@gmail.com)
+// Owner/Supervisor:     Pradeep Singh Chauhan
+// Workspace:            psnh_turtlebot_cpp_ws
+// Package:              ydlidar_ros2_driver
+// File:                 ydlidar_launcher.cpp
+// License:              Apache License 2.0 (c) 2026 Naman Harshwal
+//
+// Description: Modern C++17 native process launcher for YDLidar X2.
+// ==============================================================================
+
+#include <iostream>
+#include <string>
+#include <vector>
+#include <thread>
+#include <chrono>
+#include <csignal>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#include <ament_index_cpp/get_package_share_directory.hpp>
+
+static std::vector<pid_t> child_pids;
+
+void signal_handler(int signum)
+{
+  std::cout << "\n[ydlidar_launcher] Caught signal (" << signum << "). Terminating child processes..." << std::endl;
+  for (pid_t pid : child_pids) {
+    if (pid > 0) {
+      kill(-pid, SIGINT);
+    }
+  }
+  std::this_thread::sleep_for(std::chrono::milliseconds(300));
+  for (pid_t pid : child_pids) {
+    if (pid > 0) {
+      kill(-pid, SIGTERM);
+    }
+  }
+  for (pid_t pid : child_pids) {
+    if (pid > 0) {
+      int status = 0;
+      waitpid(pid, &status, 0);
+    }
+  }
+  _exit(0);
+}
+
+pid_t spawn(const std::string &name, const std::vector<std::string> &args)
+{
+  pid_t pid = fork();
+  if (pid == 0) {
+    setpgid(0, 0);
+    std::vector<char *> argv;
+    for (const auto &arg : args) {
+      argv.push_back(const_cast<char *>(arg.c_str()));
+    }
+    argv.push_back(nullptr);
+    execvp(argv[0], argv.data());
+    std::cerr << "Failed to execvp " << name << std::endl;
+    _exit(127);
+  }
+  std::cout << "[ydlidar_launcher] Started " << name << " (PID: " << pid << ")" << std::endl;
+  child_pids.push_back(pid);
+  return pid;
+}
+
+int main(int argc, char **argv)
+{
+  std::signal(SIGINT, signal_handler);
+  std::signal(SIGTERM, signal_handler);
+
+  std::string params_file = "";
+  if (argc > 1) {
+    params_file = argv[1];
+  } else {
+    try {
+      std::string share_dir = ament_index_cpp::get_package_share_directory("ydlidar_ros2_driver");
+      params_file = share_dir + "/params/X2.yaml";
+    } catch (...) {
+      params_file = "/home/ps/psnh_turtlebot_cpp_ws/src/ydlidar_ros2_driver/params/X2.yaml";
+    }
+  }
+
+  std::cout << "========================================================" << std::endl;
+  std::cout << " YDLIDAR ROS 2 Driver Launcher (100% Native C++17)      " << std::endl;
+  std::cout << " Using parameters: " << params_file << std::endl;
+  std::cout << "========================================================" << std::endl;
+
+  spawn("ydlidar_node", {"ros2", "run", "ydlidar_ros2_driver", "ydlidar_ros2_driver_node", "--ros-args", "--params-file", params_file});
+
+  for (pid_t pid : child_pids) {
+    int status = 0;
+    waitpid(pid, &status, 0);
+  }
+  return 0;
+}
