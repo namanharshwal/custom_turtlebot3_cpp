@@ -1,0 +1,39 @@
+# ==============================================================================
+# Maintainer: Naman Harshwal
+# Owner/Supervisor: Pradeep Singh Chauhan
+# Workspace: psnh_turtlebot_ws
+# License: Apache License 2.0 (c) 2026 Naman Harshwal
+# 
+# Description: Core configuration/source file for ekf.yaml.
+# Part of the Custom TurtleBot Burger ecosystem. Responsible for defining
+# parameters, URDF structures, or ROS 2 node configurations.
+# ==============================================================================
+
+ekf_filter_node:
+  ros__parameters:
+    frequency: 10.0
+    two_d_mode: true
+    publish_tf: true
+
+    map_frame: map
+    odom_frame: odom
+    base_link_frame: base_footprint
+    world_frame: odom
+
+    odom0: /odom
+    odom0_config: [true,  true,  false,
+                   false, false, false,
+                   false, false, false,
+                   false, false, true,
+                   false, false, false]
+    odom0_differential: false
+
+    imu0: /imu/data
+    imu0_config: [false, false, false,
+                  false, false, true,
+                  false, false, false,
+                  false, false, true,
+                  true,  false, false]
+    imu0_differential: false
+    imu0_relative: false
+    imu0_remove_gravitational_acceleration: true

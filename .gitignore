@@ -1,0 +1,20 @@
+# Colcon build artifacts, install directory, and build logs
+build/
+install/
+log/
+
+# Python compiled bytecode and cache
+__pycache__/
+*.pyc
+*.pyo
+
+# System temporary and swap files
+*~
+*.swp
+*.swo
+.DS_Store
+
+# Hidden local agent and sensitive workspace files
+chat.sh
+.antigravity_memory.md
+.gemini/
