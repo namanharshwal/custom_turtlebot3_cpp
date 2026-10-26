@@ -31,6 +31,7 @@ find_package(sensor_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(nav2_msgs REQUIRED)
+find_package(visualization_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
@@ -137,6 +138,16 @@ ament_target_dependencies(waypoint_navigator
   nav2_msgs
 )
 
+# ── 10. docking_station_visualizer ────────────────────────────
+add_executable(docking_station_visualizer
+  src/docking_station_visualizer.cpp
+)
+ament_target_dependencies(docking_station_visualizer
+  rclcpp
+  visualization_msgs
+  geometry_msgs
+)
+
 # ── Install Executables ────────────────────────────────────────
 install(TARGETS
   arduino_bridge
@@ -148,6 +159,7 @@ install(TARGETS
   autonomous_mapping_launcher
   full_navigation_launcher
   waypoint_navigator
+  docking_station_visualizer
   DESTINATION lib/${PROJECT_NAME}
 )
 

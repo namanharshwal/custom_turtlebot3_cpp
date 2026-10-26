@@ -52,7 +52,8 @@ int main(int argc, char ** argv)
   launcher.spawn("slam_toolbox", {
     "ros2", "run", "slam_toolbox", "async_slam_toolbox_node",
     "--ros-args",
-    "--params-file", params_path
+    "--params-file", params_path,
+    "-p", "use_lifecycle_manager:=false"
   });
 
   std::cout << "[C++ Launcher] SLAM Toolbox active. Press Ctrl+C to terminate." << std::endl;

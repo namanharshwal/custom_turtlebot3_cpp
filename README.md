@@ -52,24 +52,31 @@ The interface below demonstrates the pure C++ autonomous mapping stack running l
 | :--- | :--- | :--- | :--- | :--- |
 | **Global Options** | Fixed Frame: `map` | N/A | Active | Reference world coordinate frame computed by SLAM Toolbox. |
 | **Grid** | Ground Reference | `rviz_default_plugins/Grid` | Active | 10m × 10m planar ground reference with 1.0m major divisions. |
-| **Image (Live Feed)** | `/camera/image_annotated` | `sensor_msgs/msg/Image` | 10.0 Hz | Bottom-left docked view showing real-time video, bounding boxes, and HUD (`Cam: 62.3 FPS \| YOLO: 1.2 FPS`). |
-| **Map** | `/map` | `nav_msgs/msg/OccupancyGrid` | 1.0 Hz | High-resolution occupancy grid ($0.05\text{ m/pixel}$) updated incrementally. |
+| **Image (Live Feed)** | `/camera/image_annotated` | `sensor_msgs/msg/Image` | 19.9 Hz | Bottom-left docked view showing real-time video, bounding boxes, and HUD (`Cam: 19.9 FPS \| YOLO: 0.5 FPS`). |
+| **Map** | `/map` | `nav_msgs/msg/OccupancyGrid` | 1.0 Hz | High-resolution occupancy grid ($0.05\text{ m/pixel}$) with crisp 90° rectangular geometry. |
 | **RobotModel** | `/robot_description` | `urdf` | Active | 3D kinematics rendered from embedded C++ string definition [`robot_description.hpp`](src/custom_bot_cpp/include/custom_bot_cpp/robot_description.hpp). |
-| **TF (Coordinate Tree)**| Coordinate Transforms | `tf2_msgs/msg/TFMessage` | 50.0 Hz | Planar transform tree: `map` $\rightarrow$ `odom` $\rightarrow$ `base_footprint` $\rightarrow$ `base_link` $\rightarrow$ `laser_frame`, `imu_link`, `camera_link`. |
+| **TF (Coordinate Tree)**| Coordinate Transforms | `tf2_msgs/msg/TFMessage` | 50.0 Hz | Planar transform tree: `map` $\rightarrow$ `odom` $\rightarrow$ `base_footprint` $\rightarrow$ `base_link` $\rightarrow$ `laser_frame`, `tof_link`, `imu_link`, `camera_link`. |
 | **LaserScan** | `/scan` | `sensor_msgs/msg/LaserScan` | 10.0 Hz | 360° point cloud from YDLidar X2 detecting room perimeter and obstacles. |
+| **VL53L0X ToF Range** | `/tof/range` | `sensor_msgs/msg/Range` | 20.0 Hz | 25° conical infrared beam covering low ground obstacles below LiDAR scan plane. |
 | **Odometry** | `/odom` | `nav_msgs/msg/Odometry` | 20.0 Hz | Calibrated dead-reckoning trajectory trail fusing encoder CPRs and BNO055 heading. |
+| **Amcl Particle Swarm** | `/particlecloud` | `nav2_msgs/msg/ParticleCloud` | Active | Particle swarm displaying probabilistic robot hypothesis cloud during localization. |
+| **Global Planner** | `/global_costmap/costmap`, `/plan` | `nav_msgs/msg/Path` | Active | Global costmap inflation and A*/Dijkstra optimal navigation trajectory. |
+| **Controller** | `/local_costmap/costmap`, `/local_plan` | `nav_msgs/msg/Path` | 10.0 Hz | Local costmap obstacle buffer and DWB trajectory evaluation paths. |
+| **Waypoints** | `/waypoints` | `visualization_msgs/msg/MarkerArray` | Active | 3D waypoint sphere markers (WP 1, WP 2, WP 3) with floating altitude text. |
+| **Docking Station** | `/docking_station/marker` | `visualization_msgs/msg/MarkerArray` | 2.0 Hz | 3D autonomous docking station base, charging contacts, LED status beacon, guidance chevrons. |
 
 ---
 
 ### 2. Live C++ Nav2 Autonomous Waypoint Navigation
-The interface below demonstrates Nav2 autonomous navigation operating on the newly saved room map with AMCL localization and the C++ Waypoint Follower:
+The interface below demonstrates Nav2 autonomous navigation operating on the newly saved room map with AMCL localization, the 3D Docking/Charging Station visualizer, and the C++ Waypoint Follower:
 
 ![Live Nav2 Waypoint Navigation](docs/images/rviz2_nav2_waypoint_navigation.png)
 
-* **Navigation State:** `Navigation: active` (Green)
-* **Localization State:** `Localization: active` (Green, AMCL particle swarm converged)
-* **Costmap Inflation:** Local and global dynamic costmaps actively guarding robot clearance.
-* **Waypoint Mode:** Full interactive and program-directed waypoint tours via [`waypoint_navigator.cpp`](src/custom_bot_cpp/src/waypoint_navigator.cpp).
+* **Navigation & Localization:** AMCL particle swarm converged, global path `/plan` and local path `/local_plan` computed.
+* **3D Docking & Charging Station:** Rendered in global `/map` frame on `/docking_station/marker` with approach chevrons and charging contacts.
+* **Multi-Waypoint Mission:** Autonomous waypoint sequence (WP 1 $\rightarrow$ WP 2 $\rightarrow$ WP 3) visualized on `/waypoints`.
+* **Low-Obstacle Guardian:** VL53L0X Time-of-Flight sensor guarding front bumper ($x=+6.5\text{cm}, z=+3.5\text{cm}$) on `/tof/range`.
+* **Integrated YOLOv4-tiny Vision:** Live person detection overlay (`person 81%`) in bottom-left docked viewport.
 
 ---
 
@@ -79,8 +86,9 @@ Generated entirely by the C++ stack during autonomous exploration and saved to [
 ![Saved Room Map](docs/images/saved_slam_room_map.png)
 
 * **Grid Resolution:** $0.05\text{ m/pixel}$ ($5.0\text{ cm}$ physical cell size)
-* **Total Dimension:** $75 \times 156\text{ cells}$ ($3.75\text{ m} \times 7.80\text{ m}$)
-* **Map Origin:** $[-0.69\text{ m}, -3.49\text{ m}, 0.0^\circ]$
+* **Total Dimension:** $155 \times 155\text{ cells}$ ($7.75\text{ m} \times 7.75\text{ m}$)
+* **Map Origin:** $[-1.59\text{ m}, -2.00\text{ m}, 0.0^\circ]$
+* **Geometry:** Crisp 90° right-angle room corners with zero rotational shearing or loop distortion.
 
 ---
 
@@ -131,10 +139,27 @@ psnh_turtlebot_cpp_ws/
 │   │   ├── include/custom_bot_cpp/        # C++ header declarations
 │   │   ├── models/                        # Darknet YOLOv4-tiny weights & cfg
 │   │   └── src/                           # Native C++ executables & process supervisors
+│   │       ├── arduino_bridge.cpp         # Hardware serial bridge & BNO055 heading fusion
+│   │       ├── simple_explorer.cpp        # Autonomous reactive explorer with ToF guardian
+│   │       ├── docking_station_visualizer.cpp # 3D Docking/Charging Station visualizer
+│   │       ├── object_detector_node.cpp   # OpenCV DNN YOLOv4-tiny inference engine
+│   │       ├── waypoint_navigator.cpp     # C++ Nav2 action client waypoint follower
+│   │       ├── teleop_key_hold.cpp        # Smooth teleoperation controller
+│   │       ├── autonomous_mapping_launcher.cpp # Master C++ SLAM orchestrator
+│   │       ├── full_navigation_launcher.cpp    # Master C++ Nav2 orchestrator
+│   │       ├── robot_full_launcher.cpp    # Hardware orchestrator
+│   │       └── slam_launcher.cpp          # SLAM Toolbox orchestrator
 │   ├── custom_bot_nav_cpp/                # Nav2 autonomous navigation configuration
 │   │   ├── CMakeLists.txt                 # Navigation package build rules
 │   │   ├── package.xml                    # Nav2 configuration package manifest
 │   │   └── config/nav2_params.yaml        # Costmaps, DWB controller & planner tuning
+│   ├── vl53l0x_sensor_cpp/                # 100% Native C++17 Driver for ST VL53L0X ToF
+│   │   ├── CMakeLists.txt                 # Modern C++17 build rules (-O3)
+│   │   ├── package.xml                    # ToF package manifest
+│   │   ├── include/vl53l0x_sensor_cpp/    # Direct Linux I2C ioctl headers
+│   │   └── src/
+│   │       ├── vl53l0x_node.cpp           # Hardware I2C 20Hz driver node (/tof/range)
+│   │       └── vl53l0x_launcher.cpp       # Standalone C++ process supervisor
 │   ├── diffdrive_arduino/                 # ros2_control differential drive hardware plugin
 │   │   ├── CMakeLists.txt                 # Modern C++17 library & launcher build rules
 │   │   ├── package.xml                    # Hardware interface manifest
@@ -307,6 +332,63 @@ Direct pointer arithmetic unrolls the $480 \times 800$ byte matrix into an 8-bit
     │   • OUT3 / OUT4 ────────── 12V High-Current ──────────► Rhino GB37 Right Motor │
     │   • 12V / GND   ◄──────── High-Current Rails ───────── 3S LiPo (11.1V - 12.6V) │
     └────────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### 🔌 VL53L0X Time-of-Flight (ToF) Infrared Sensor Hardware Integration
+
+To eliminate low-profile ground blindspots that pass beneath the 2D planar LiDAR beam, a high-precision **STMicroelectronics VL53L0X Time-of-Flight (ToF)** distance sensor is mounted to the front lower bumper plate.
+
+#### 1. Hardware Pinout & Wiring Table (Raspberry Pi 4B $\leftrightarrow$ VL53L0X)
+
+| VL53L0X Breakout Pin | Signal Function | Raspberry Pi 4B Header | Physical Pin # | Logic / Voltage | Wire Color |
+| :--- | :--- | :--- | :---: | :--- | :--- |
+| **VIN / VCC** | Module Power Supply | **3V3 Power Rail** | **Pin 1** | 3.3V DC | 🔴 Red |
+| **GND** | Signal Ground | **Ground (GND)** | **Pin 9** *(or 6, 14, 20)* | 0V Ground | ⚫ Black |
+| **SDA** | I2C Data Line | **GPIO 2 (I2C1_SDA)** | **Pin 3** | 3.3V Logic (1.8kΩ pull-up) | 🟡 Yellow |
+| **SCL** | I2C Clock Line | **GPIO 3 (I2C1_SCL)** | **Pin 5** | 3.3V Logic (1.8kΩ pull-up) | 🟢 Green |
+| **XSHUT** | Hardware Reset / Sleep | **GPIO 4 (GPCLK0)** | **Pin 7** | 3.3V Active-High *(Optional)* | ⚪ White |
+| **GPIO1** | Hardware Interrupt | *Not Connected* | — | Unused (Polling Mode) | — |
+
+> [!WARNING]
+> **Raspberry Pi 3.3V GPIO Protection:** Always connect **VIN** to **Pin 1 (3.3V)**. Never connect VIN to the 5V rail (Pins 2 or 4), as this exposes the Raspberry Pi's native I2C lines to over-voltage damage.
+
+#### 2. Physical Mounting & Ground Blindspot Elimination Rationale
+
+* **Mounting Position:** Front lower bumper center:
+  $$\begin{cases} x = +0.065\,\text{m} & (\text{6.5 cm forward of robot center}) \\ y = 0.000\,\text{m} & (\text{robot centerline}) \\ z = +0.035\,\text{m} & (\text{3.5 cm above floor level}) \end{cases}$$
+* **LiDAR vs. ToF Elevation Differential:**
+  * **YDLidar X2 Plane:** Sits elevated at $z = +12.2\,\text{cm}$ above ground. It shoots directly over low objects ($< 10\,\text{cm}$ tall) such as shoes, door thresholds, cables, table feet, and flat obstacles.
+  * **VL53L0X ToF Cone:** Mounted low at $z = +3.5\,\text{cm}$ with a **25.0° conical Field of View (FoV)** covering distances from $0.03\,\text{m}$ to $2.00\,\text{m}$.
+  * **Bumper Guardian:** Catches all low-lying hazards right in front of the wheels before physical contact occurs.
+
+#### 3. Real-Time SLAM Isolation & Harmonic Obstacle Avoidance
+
+* **Strict SLAM Map Protection:** The ToF sensor publishes to `/tof/range` (`sensor_msgs/msg/Range`). It is **never fed into SLAM Toolbox's `/scan` input**. This mathematically guarantees that dynamic low obstacles do not pollute or distort the static 2D SLAM room occupancy grid.
+* **Harmonized Multi-Layer Sensor Fusion:**
+  * **2D LiDAR ($0.25\text{m} - 0.45\text{m}$):** Exclusively drives forward cruise speed, wall-following, and smooth predictive path curvature.
+  * **VL53L0X ToF ($0.04\text{m} - 0.08\text{m}$):** Acts as an emergency close-contact bumper guardian. By calibrating the emergency trigger strictly to the close-contact zone ($4\text{cm} - 8\text{cm}$) and filtering out open-room phase-fail returns (`range_status == 8`), flat floor reflections are completely ignored, enabling the robot to cruise smoothly across open floors while staying 100% protected against low obstacles!
+
+#### 4. Dual-Workspace Package Architecture
+
+Both ROS 2 workspaces contain dedicated, standalone packages for the sensor:
+* **Pure C++17 Workspace (`/home/ps/psnh_turtlebot_cpp_ws`):** [`vl53l0x_sensor_cpp`](src/vl53l0x_sensor_cpp) communicates directly over native Linux kernel `/dev/i2c-1` ioctl at 20.0 Hz with sub-millisecond execution latency.
+* **Python Workspace (`/home/ps/psnh_turtlebot_ws`):** `vl53l0x_sensor` provides identical telemetry using `smbus2` for Python-based stacks.
+
+#### 5. Hardware Verification Command
+
+```bash
+# Verify sensor connection on I2C bus 1 (address 0x29)
+i2cdetect -y 1
+```
+Output confirms address `29` at row 20, column 9:
+```text
+     0  1  2  3  4  5  6  7  8  9  a  b  c  d  e  f
+00:                         -- -- -- -- -- -- -- -- 
+10: -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- 
+20: -- -- -- -- -- -- -- -- -- 29 -- -- -- -- -- -- 
+30: -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- 
 ```
 
 ---

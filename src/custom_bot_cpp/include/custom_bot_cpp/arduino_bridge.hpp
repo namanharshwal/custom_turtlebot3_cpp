@@ -39,7 +39,6 @@
 #include "sensor_msgs/msg/imu.hpp"
 #include "sensor_msgs/msg/joint_state.hpp"
 #include "tf2_ros/transform_broadcaster.h"
-#include "tf2/LinearMath/Quaternion.h"
 
 namespace custom_bot_cpp
 {
@@ -56,29 +55,24 @@ private:
   void initSerial();
   void closeSerial();
 
-  // Callbacks
+  // Callbacks & Threads
   void cmdVelCallback(const geometry_msgs::msg::Twist::SharedPtr msg);
   void serialReaderLoop();
+  void watchdogKeepaliveLoop();
   void parseSerialLine(const std::string & line);
-  void updateOdometry(long l_enc, long r_enc, double qw, double qx, double qy, double qz,
-                      double ax, double ay, double az, double gx, double gy, double gz);
+  void updateOdometry(long raw_right_ticks, long raw_left_ticks,
+                      double qw, double qx, double qy, double qz,
+                      double ax, double ay, double az,
+                      double gx, double gy, double gz);
   void sendMotorPWM(int left_pwm, int right_pwm);
-  int velocityToPWM(double vel);
-  void sendHeartbeat();
-
-  // Mathematical utility functions
-  static inline double normalizeAngle(double angle)
-  {
-    while (angle > M_PI) angle -= 2.0 * M_PI;
-    while (angle < -M_PI) angle += 2.0 * M_PI;
-    return angle;
-  }
 
   // Serial device file descriptor & thread management
   int serial_fd_{-1};
   std::thread serial_thread_;
+  std::thread keepalive_thread_;
   std::atomic<bool> running_{false};
   std::mutex serial_write_mutex_;
+  std::mutex keepalive_mutex_;
 
   // ROS 2 Communication Interfaces
   rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_sub_;
@@ -86,7 +80,6 @@ private:
   rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr imu_pub_;
   rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr joint_pub_;
   std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
-  rclcpp::TimerBase::SharedPtr heartbeat_timer_;
 
   // Robot Configuration Parameters
   std::string serial_port_;
@@ -95,39 +88,51 @@ private:
   double wheel_radius_;
   double wheel_circumference_;
   double wheel_separation_;
-  int cpr_left_;
-  int cpr_right_;
+  int ticks_per_rev_left_;
+  int ticks_per_rev_right_;
   double meters_per_tick_left_;
   double meters_per_tick_right_;
   double max_speed_;
   bool publish_tf_;
   std::string base_frame_;
   std::string odom_frame_;
-  int min_pwm_;
-  int max_pwm_;
+
+  // Motor Control & Anti-Stall Tuning Constants (Identical to proven Python implementation)
+  const int MIN_PWM{68};
+  const double DEADBAND{0.005};
+  const int LEFT_WHEEL_SIGN{1};
+  const int RIGHT_WHEEL_SIGN{1};
+
+  // Motor State Variables
+  bool was_stopped_{true};
+  double kick_until_{0.0};
+  int stall_level_{0};
+  double last_stall_check_{0.0};
+  long last_check_left_ticks_{0};
+  long last_check_right_ticks_{0};
+
+  // Watchdog Keepalive State
+  double last_cmd_time_{0.0};
+  int last_l_pwm_{0};
+  int last_r_pwm_{0};
+  uint64_t cmd_count_{0};
+  uint64_t debug_msg_count_{0};
 
   // Odometry State
   double x_{0.0};
   double y_{0.0};
   double theta_{0.0};
+  double initial_yaw_{0.0};
   double theta_prev_raw_{0.0};
-  bool first_heading_received_{false};
+  bool has_initial_yaw_{false};
 
-  long prev_l_enc_{0};
-  long prev_r_enc_{0};
-  bool first_enc_received_{false};
-  double last_odom_time_{0.0};
+  long left_ticks_{0};
+  long right_ticks_{0};
+  long prev_left_ticks_{0};
+  long prev_right_ticks_{0};
 
   double left_wheel_angle_{0.0};
   double right_wheel_angle_{0.0};
-
-  // Layer 1 Anti-Stall State
-  double last_stall_check_time_{0.0};
-  long stall_check_ticks_{0};
-  bool stall_boost_active_{false};
-  double stall_boost_end_time_{0.0};
-  double last_cmd_vel_linear_{0.0};
-  double last_cmd_time_{0.0};
 };
 
 }  // namespace custom_bot_cpp

@@ -61,6 +61,10 @@ SimpleExplorer::SimpleExplorer(const rclcpp::NodeOptions & options)
     "/scan", rclcpp::SensorDataQoS(),
     std::bind(&SimpleExplorer::scanCallback, this, std::placeholders::_1));
 
+  tof_sub_ = this->create_subscription<sensor_msgs::msg::Range>(
+    "/tof/range", 10,
+    std::bind(&SimpleExplorer::tofCallback, this, std::placeholders::_1));
+
   odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
     "/odom", 10,
     std::bind(&SimpleExplorer::odomCallback, this, std::placeholders::_1));
@@ -104,6 +108,13 @@ void SimpleExplorer::scanCallback(const sensor_msgs::msg::LaserScan::SharedPtr m
   scan_ = msg;
   scan_time_ = this->now().seconds();
   scan_count_++;
+}
+
+void SimpleExplorer::tofCallback(const sensor_msgs::msg::Range::SharedPtr msg)
+{
+  if (msg->range >= msg->min_range && msg->range <= msg->max_range) {
+    tof_range_ = msg->range;
+  }
 }
 
 double SimpleExplorer::sectorMin(const std::vector<float> & ranges, float angle_min, float angle_inc,
@@ -161,7 +172,12 @@ void SimpleExplorer::controlLoop()
   double left        = sectorMin(ranges, a_min, a_inc,  50.0, 110.0);
   double right       = sectorMin(ranges, a_min, a_inc, -110.0, -50.0);
 
-  // 0. PHYSICAL STALL DETECTION (Layer 2)
+  // Close-proximity low-profile obstacle detection via VL53L0X ToF (3.5cm above ground):
+  // Harmonized with LiDAR: reduced to close bumper range (4cm to 8cm),
+  // preventing floor reflections from blocking forward motion while guarding against low obstacles.
+  bool low_obstacle_emergency = (tof_range_ >= 0.04 && tof_range_ <= 0.08);
+
+  // 0. PHYSICAL STALL DETECTION (Layer 2 Anti-Stall Guardian)
   if (state_ == ExplorerState::FORWARD || state_ == ExplorerState::CURVE) {
     if ((now - last_stall_check_time_) >= 1.2) {
       double dist = std::hypot(curr_x_ - last_stall_x_, curr_y_ - last_stall_y_);
@@ -172,7 +188,7 @@ void SimpleExplorer::controlLoop()
       if (dist < 0.025) {
         stall_count_++;
         RCLCPP_WARN(this->get_logger(),
-                    "Physical stall detected (%.1fcm in 1.2s)! Reversing #%u",
+                    "Physical stall detected (%.1fcm in 1.2s)! Backing up to clear #%u",
                     dist * 100.0, stall_count_);
         state_ = ExplorerState::REVERSE;
         reverse_start_time_ = now;
@@ -200,7 +216,7 @@ void SimpleExplorer::controlLoop()
       cmd.angular.z = turn_direction_ * 0.40;
     }
   }
-  // 2. ROTATE STATE
+  // 2. ROTATE STATE (In-Place Angular Pivot away from obstacles)
   else if (state_ == ExplorerState::ROTATE) {
     double rotate_dur = now - rotate_start_time_;
     if (rotate_dur > 4.5) {
@@ -208,7 +224,7 @@ void SimpleExplorer::controlLoop()
       reverse_start_time_ = now;
       cmd.linear.x = -0.05;
       cmd.angular.z = 0.0;
-    } else if (rotate_dur >= 1.5 && front >= clear_dist_ && front_left >= 0.22 && front_right >= 0.22) {
+    } else if (rotate_dur >= 1.5 && front >= clear_dist_ && front_left >= 0.22 && front_right >= 0.22 && !low_obstacle_emergency) {
       state_ = ExplorerState::FORWARD;
       last_state_change_ = now;
       last_stall_check_time_ = now;
@@ -221,8 +237,8 @@ void SimpleExplorer::controlLoop()
       cmd.angular.z = turn_direction_ * 0.40;
     }
   }
-  // 3. CRITICAL DISTANCE CHECK
-  else if (front < critical_dist_) {
+  // 3. CRITICAL DISTANCE CHECK (LiDAR obstacle < critical_dist OR low ToF emergency < 8cm)
+  else if (front < critical_dist_ || low_obstacle_emergency) {
     state_ = ExplorerState::ROTATE;
     rotate_start_time_ = now;
     if (right < left || front_right < front_left) {
@@ -233,7 +249,7 @@ void SimpleExplorer::controlLoop()
     cmd.linear.x = 0.0;
     cmd.angular.z = turn_direction_ * 0.40;
   }
-  // 4. PREDICTIVE CURVE
+  // 4. PREDICTIVE CURVE (LiDAR obstacle < obstacle_dist)
   else if (front < obstacle_dist_ || front_left < 0.25 || front_right < 0.25) {
     state_ = ExplorerState::CURVE;
     cmd.linear.x = linear_speed_ * 0.80;

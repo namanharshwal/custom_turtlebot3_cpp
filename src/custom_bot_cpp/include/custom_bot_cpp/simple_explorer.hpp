@@ -30,6 +30,7 @@
 
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/laser_scan.hpp"
+#include "sensor_msgs/msg/range.hpp"
 #include "nav_msgs/msg/odometry.hpp"
 #include "geometry_msgs/msg/twist.hpp"
 
@@ -54,6 +55,7 @@ private:
   void declareParameters();
   void odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg);
   void scanCallback(const sensor_msgs::msg::LaserScan::SharedPtr msg);
+  void tofCallback(const sensor_msgs::msg::Range::SharedPtr msg);
   void controlLoop();
   double sectorMin(const std::vector<float> & ranges, float angle_min, float angle_inc,
                    double deg_start, double deg_end);
@@ -83,8 +85,12 @@ private:
   // ROS 2 Interfaces
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cmd_pub_;
   rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_sub_;
+  rclcpp::Subscription<sensor_msgs::msg::Range>::SharedPtr tof_sub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
   rclcpp::TimerBase::SharedPtr timer_;
+
+  // ToF Range Cache
+  double tof_range_{2.0};
 
   // Odometry Stall Monitoring
   double curr_x_{0.0};

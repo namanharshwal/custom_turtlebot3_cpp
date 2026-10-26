@@ -76,7 +76,10 @@ int main(int argc, char ** argv)
     "-p", "range_min:=0.15",
     "-p", "resolution_fixed:=true",
     "-p", "auto_reconnect:=true",
-    "-p", "reversion:=false"
+    "-p", "reversion:=false",
+    "-p", "inverted:=false",
+    "-p", "abnormal_check_count:=4",
+    "-p", "invalid_range_is_inf:=true"
   });
 
   // 3. Arduino Bridge (delayed 2s for hardware calibration)
@@ -87,9 +90,23 @@ int main(int argc, char ** argv)
     "-p", "baud_rate:=115200",
     "-p", "wheel_diameter:=0.065",
     "-p", "wheel_separation:=0.150",
-    "-p", "encoder_ticks_per_rev:=412",
-    "-p", "max_speed:=0.5",
+    "-p", "encoder_ticks_left:=412",
+    "-p", "encoder_ticks_right:=440",
+    "-p", "max_speed:=0.40",
     "-p", "publish_tf:=true"
+  }, 2);
+
+  // 3.5 VL53L0X Time-of-Flight Infrared Distance Sensor (delayed 2s)
+  launcher.spawnDelayed("vl53l0x_node", {
+    "ros2", "run", "vl53l0x_sensor_cpp", "vl53l0x_node",
+    "--ros-args",
+    "-p", "i2c_bus:=1",
+    "-p", "i2c_address:=41",
+    "-p", "frame_id:=tof_link",
+    "-p", "min_range:=0.03",
+    "-p", "max_range:=2.00",
+    "-p", "field_of_view:=0.4363",
+    "-p", "publish_rate:=20.0"
   }, 2);
 
   // 4. Object Detector Node (Camera & YOLOv4-tiny)
