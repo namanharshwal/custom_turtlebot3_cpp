@@ -69,20 +69,19 @@ The interface below demonstrates the pure C++ autonomous mapping stack running l
 
 ---
 
-### 2. Live C++ Nav2 Autonomous Waypoint Navigation & Multi-Terminal Telemetry
-The interface below demonstrates Nav2 autonomous navigation operating on the saved room map with AMCL localization, the 3D Docking/Charging Station visualizer, low-obstacle VL53L0X Time-of-Flight protection, and dedicated live telemetry terminals:
+### 2. Live C++ Nav2 Autonomous Navigation & Real-Time Visualization
+The interface below demonstrates the pure C++ Nav2 autonomous navigation stack operating live in RViz2 on the saved room map with AMCL localization, dynamic costmap inflation, 3D Docking/Charging Station markers, low-obstacle VL53L0X Time-of-Flight protection, and real-time Darknet YOLOv4-tiny computer vision:
 
-![Live Desktop Autonomous Navigation with Tiled Terminals](docs/images/tiled_navigation_desktop_active.png)
+![Live Nav2 Autonomous Navigation RViz2 Interface](docs/images/rviz2_nav2_autonomous_navigation.png)
 
-#### Live Subsystem Showcase:
-* **RViz2 Workspace (Left):** Real-time display of the $155 \times 155$ cell room occupancy grid ($0.05\text{ m/pixel}$), active 3D RobotModel kinematics, YDLidar 360° LaserScan (`/scan`), AMCL probabilistic particle swarm (`/particlecloud`), global planner path (`/plan`), local DWB controller trajectory (`/local_plan`), 3D autonomous docking station (`/docking_station/marker`), and the live OpenCV Darknet camera feed with YOLO HUD overlay (`/camera/image_annotated`).
-* **Terminal 1 — Top Right (`/amcl_pose`):** Live streaming telemetry of the adaptive Monte Carlo localization pose estimator displaying robot coordinate positions $(x, y, z)$, quaternion orientation, and spatial covariance matrix ensuring sub-centimeter convergence.
-* **Terminal 2 — Bottom Right (`/tof/range`):** Direct hardware I2C stream from the VL53L0X Time-of-Flight sensor operating at 20.0 Hz, providing millimetric proximity measurements to prevent low-height collisions below the LiDAR planar beam.
-
-| High-Resolution RViz2 Navigation Canvas | Live AMCL Pose Stream | Live VL53L0X ToF Stream |
-| :---: | :---: | :---: |
-| ![RViz2 Canvas](docs/images/rviz2_nav2_window.png) | ![AMCL Stream](docs/images/terminal_amcl_pose.png) | ![ToF Stream](docs/images/terminal_tof_range.png) |
-| *Nav2 costmaps, path plans, and 3D docking station.* | *Real-time position $(x,y)$ and orientation.* | *20 Hz hardware infrared range detection.* |
+#### Live RViz2 Autonomous Navigation Systems:
+* **High-Precision Metric Room Map:** $155 \times 155$ cell occupancy grid ($0.05\text{ m/pixel}$) providing static obstacle boundaries for global path planning.
+* **AMCL Probabilistic Particle Swarm:** Adaptive Monte Carlo localization on `/particlecloud` updating the robot pose hypothesis (`map` $\rightarrow$ `odom` $\rightarrow$ `base_footprint`) with sub-centimeter convergence.
+* **Dynamic Costmaps (Global & Local):** Dual-layer costmap inflation incorporating static map obstacles and live 360° YDLidar scans (`/scan`) for collision-free trajectory computation.
+* **Optimal Trajectory Execution:** Navfn global planner calculating optimal paths (`/plan`) paired with DWB local controller generating dynamically feasible velocity commands (`/cmd_vel`).
+* **3D Autonomous Docking Station:** Rendered in the `/map` frame on `/docking_station/marker` with charging contacts, LED status beacon, and orientation alignment chevrons.
+* **Low-Obstacle Front Guardian:** VL53L0X Time-of-Flight sensor broadcasting conical infrared range beams on `/tof/range` to detect low-profile floor hazards below the LiDAR plane.
+* **Integrated YOLOv4-tiny Vision HUD:** Real-time bottom-left docked viewport streaming normalized camera video with live object detection overlays (`/camera/image_annotated`).
 
 ---
 
