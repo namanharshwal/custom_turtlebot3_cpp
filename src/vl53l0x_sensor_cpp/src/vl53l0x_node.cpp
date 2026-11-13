@@ -70,7 +70,7 @@ void VL53L0XNode::declareParameters()
   this->declare_parameter<int>("i2c_address", 0x29);
   this->declare_parameter<std::string>("frame_id", "tof_link");
   this->declare_parameter<double>("min_range", 0.03);      // 3 cm minimum
-  this->declare_parameter<double>("max_range", 2.00);      // 2 m maximum
+  this->declare_parameter<double>("max_range", 0.45);      // 45 cm maximum (harmonized with LiDAR obstacle distance)
   this->declare_parameter<double>("field_of_view", 0.4363); // 25° conical cone
   this->declare_parameter<double>("publish_rate", 20.0);   // 20 Hz update rate
 
@@ -180,7 +180,8 @@ double VL53L0XNode::readDistanceMeters()
   }
 
   uint16_t dist_mm = (static_cast<uint16_t>(buf[10]) << 8) | buf[11];
-  if (dist_mm <= 35 || dist_mm > 2000) {
+  uint16_t max_mm = static_cast<uint16_t>(max_range_ * 1000.0);
+  if (dist_mm <= 35 || dist_mm > max_mm) {
     return max_range_;
   }
 

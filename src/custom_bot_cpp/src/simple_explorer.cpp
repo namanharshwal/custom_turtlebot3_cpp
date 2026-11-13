@@ -172,10 +172,14 @@ void SimpleExplorer::controlLoop()
   double left        = sectorMin(ranges, a_min, a_inc,  50.0, 110.0);
   double right       = sectorMin(ranges, a_min, a_inc, -110.0, -50.0);
 
-  // Close-proximity low-profile obstacle detection via VL53L0X ToF (3.5cm above ground):
-  // Harmonized with LiDAR: reduced to close bumper range (4cm to 8cm),
-  // preventing floor reflections from blocking forward motion while guarding against low obstacles.
-  bool low_obstacle_emergency = (tof_range_ >= 0.04 && tof_range_ <= 0.08);
+  // Harmonized ToF & 2D LiDAR Obstacle Detection:
+  // Both sensors work together at identical ranging thresholds:
+  //   - Critical threshold: < critical_dist (0.30m)
+  //   - Warning/Curve threshold: < obstacle_dist (0.45m)
+  // Readings < 0.05m are filtered out to prevent ground reflection,
+  // and readings >= 0.45m are out of range (unobstructed).
+  bool tof_critical = (tof_range_ >= 0.05 && tof_range_ < critical_dist_);
+  bool tof_warning  = (tof_range_ >= 0.05 && tof_range_ < obstacle_dist_);
 
   // 0. PHYSICAL STALL DETECTION (Layer 2 Anti-Stall Guardian)
   if (state_ == ExplorerState::FORWARD || state_ == ExplorerState::CURVE) {
@@ -224,7 +228,7 @@ void SimpleExplorer::controlLoop()
       reverse_start_time_ = now;
       cmd.linear.x = -0.05;
       cmd.angular.z = 0.0;
-    } else if (rotate_dur >= 1.5 && front >= clear_dist_ && front_left >= 0.22 && front_right >= 0.22 && !low_obstacle_emergency) {
+    } else if (rotate_dur >= 1.5 && front >= clear_dist_ && front_left >= 0.22 && front_right >= 0.22 && !tof_critical) {
       state_ = ExplorerState::FORWARD;
       last_state_change_ = now;
       last_stall_check_time_ = now;
@@ -237,8 +241,8 @@ void SimpleExplorer::controlLoop()
       cmd.angular.z = turn_direction_ * 0.40;
     }
   }
-  // 3. CRITICAL DISTANCE CHECK (LiDAR obstacle < critical_dist OR low ToF emergency < 8cm)
-  else if (front < critical_dist_ || low_obstacle_emergency) {
+  // 3. CRITICAL DISTANCE CHECK (LiDAR obstacle < critical_dist OR ToF obstacle < critical_dist)
+  else if (front < critical_dist_ || tof_critical) {
     state_ = ExplorerState::ROTATE;
     rotate_start_time_ = now;
     if (right < left || front_right < front_left) {
@@ -249,8 +253,8 @@ void SimpleExplorer::controlLoop()
     cmd.linear.x = 0.0;
     cmd.angular.z = turn_direction_ * 0.40;
   }
-  // 4. PREDICTIVE CURVE (LiDAR obstacle < obstacle_dist)
-  else if (front < obstacle_dist_ || front_left < 0.25 || front_right < 0.25) {
+  // 4. PREDICTIVE CURVE (LiDAR obstacle < obstacle_dist OR ToF warning < obstacle_dist)
+  else if (front < obstacle_dist_ || front_left < 0.25 || front_right < 0.25 || tof_warning) {
     state_ = ExplorerState::CURVE;
     cmd.linear.x = linear_speed_ * 0.80;
     if (front_left < front_right || left < right) {
