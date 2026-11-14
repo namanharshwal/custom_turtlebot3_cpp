@@ -45,7 +45,7 @@ Every single component in this workspace—from low-level serial telemetry parsi
 > All visual assets in this repository are **100% genuine captures** taken directly from the physical robot running live in the real-world operating environment on Display `:1.0`. No simulations or mocked assets are used.
 
 ### 1. Live C++ Autonomous SLAM Mapping in RViz2
-The interface below demonstrates the pure C++ autonomous mapping stack running live. The robot maps the physical room using Ceres scan-matching while simultaneously streaming real-time normalized camera video with YOLOv4-tiny detections in the bottom-left panel:
+The interface below demonstrates the pure C++ autonomous room mapping stack running live on Display `:1.0`. The robot systematically explores the environment using Yamauchi frontier detection, spatial Euclidean clustering, active target commitment with hysteresis, and real-time Ceres scan-matching graph SLAM:
 
 ![Live C++ RViz2 Mapping Interface](docs/images/rviz2_cpp_mapping_fixed.png)
 
@@ -54,18 +54,13 @@ The interface below demonstrates the pure C++ autonomous mapping stack running l
 | :--- | :--- | :--- | :--- | :--- |
 | **Global Options** | Fixed Frame: `map` | N/A | Active | Reference world coordinate frame computed by SLAM Toolbox. |
 | **Grid** | Ground Reference | `rviz_default_plugins/Grid` | Active | 10m × 10m planar ground reference with 1.0m major divisions. |
-| **Image (Live Feed)** | `/camera/image_annotated` | `sensor_msgs/msg/Image` | 19.9 Hz | Bottom-left docked view showing real-time video, bounding boxes, and HUD (`Cam: 19.9 FPS \| YOLO: 0.5 FPS`). |
-| **Map** | `/map` | `nav_msgs/msg/OccupancyGrid` | 1.0 Hz | High-resolution occupancy grid ($0.05\text{ m/pixel}$) with crisp 90° rectangular geometry. |
+| **Map** | `/map` | `nav_msgs/msg/OccupancyGrid` | 1.0 Hz | High-resolution occupancy grid ($0.05\text{ m/pixel}$) with crisp 90° rectangular room geometry. |
+| **Frontier Markers** | `/frontier_markers` | `visualization_msgs/msg/MarkerArray` | 10.0 Hz | Cyan spheres for candidate clusters, bright gold sphere for active target centroid, and green trajectory guidance vector. |
 | **RobotModel** | `/robot_description` | `urdf` | Active | 3D kinematics rendered from embedded C++ string definition [`robot_description.hpp`](src/custom_bot_cpp/include/custom_bot_cpp/robot_description.hpp). |
 | **TF (Coordinate Tree)**| Coordinate Transforms | `tf2_msgs/msg/TFMessage` | 50.0 Hz | Planar transform tree: `map` $\rightarrow$ `odom` $\rightarrow$ `base_footprint` $\rightarrow$ `base_link` $\rightarrow$ `laser_frame`, `tof_link`, `imu_link`, `camera_link`. |
 | **LaserScan** | `/scan` | `sensor_msgs/msg/LaserScan` | 10.0 Hz | 360° point cloud from YDLidar X2 detecting room perimeter and obstacles. |
-| **VL53L0X ToF Range** | `/tof/range` | `sensor_msgs/msg/Range` | 20.0 Hz | 25° conical infrared beam covering low ground obstacles below LiDAR scan plane. |
+| **VL53L0X ToF Range** | `/tof/range` | `sensor_msgs/msg/Range` | 20.0 Hz | 25° conical infrared beam ($0.03\text{m} - 0.45\text{m}$) with carpet floor reflection rejection. |
 | **Odometry** | `/odom` | `nav_msgs/msg/Odometry` | 20.0 Hz | Calibrated dead-reckoning trajectory trail fusing encoder CPRs and BNO055 heading. |
-| **Amcl Particle Swarm** | `/particlecloud` | `nav2_msgs/msg/ParticleCloud` | Active | Particle swarm displaying probabilistic robot hypothesis cloud during localization. |
-| **Global Planner** | `/global_costmap/costmap`, `/plan` | `nav_msgs/msg/Path` | Active | Global costmap inflation and A*/Dijkstra optimal navigation trajectory. |
-| **Controller** | `/local_costmap/costmap`, `/local_plan` | `nav_msgs/msg/Path` | 10.0 Hz | Local costmap obstacle buffer and DWB trajectory evaluation paths. |
-| **Waypoints** | `/waypoints` | `visualization_msgs/msg/MarkerArray` | Active | 3D waypoint sphere markers (WP 1, WP 2, WP 3) with floating altitude text. |
-| **Docking Station** | `/docking_station/marker` | `visualization_msgs/msg/MarkerArray` | 2.0 Hz | 3D autonomous docking station base, charging contacts, LED status beacon, guidance chevrons. |
 
 ---
 
