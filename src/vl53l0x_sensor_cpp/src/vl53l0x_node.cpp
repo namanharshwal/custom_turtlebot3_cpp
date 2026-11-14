@@ -174,8 +174,8 @@ double VL53L0XNode::readDistanceMeters()
   }
 
   uint8_t range_status = (buf[0] & 0x78) >> 3;
-  // If target is out of bounds (status 8) or phase/signal fail, field is unobstructed
-  if (range_status == 8 || range_status == 6) {
+  // If target is out of bounds (status 8/11) or phase/signal fail (status 6/2), field is unobstructed
+  if (range_status == 8 || range_status == 6 || range_status == 11 || range_status == 2) {
     return max_range_;
   }
 

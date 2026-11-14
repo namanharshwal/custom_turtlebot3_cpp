@@ -169,9 +169,23 @@ void SimpleExplorer::scanCallback(const sensor_msgs::msg::LaserScan::SharedPtr m
 
 void SimpleExplorer::tofCallback(const sensor_msgs::msg::Range::SharedPtr msg)
 {
-  if (msg->range >= msg->min_range && msg->range <= msg->max_range) {
-    tof_range_ = msg->range;
+  tof_time_ = this->now().seconds();
+  double r = msg->range;
+
+  // Handle invalid/out-of-bounds readings as clear horizon
+  if (std::isnan(r) || std::isinf(r) || r < msg->min_range || r > msg->max_range) {
+    r = msg->max_range;
   }
+
+  // 3-sample median filter to reject spurious single-frame optical / ground reflections
+  tof_history_.push_back(r);
+  if (tof_history_.size() > 3) {
+    tof_history_.erase(tof_history_.begin());
+  }
+
+  std::vector<double> sorted = tof_history_;
+  std::sort(sorted.begin(), sorted.end());
+  tof_range_ = sorted[sorted.size() / 2];
 }
 
 void SimpleExplorer::mapCallback(const nav_msgs::msg::OccupancyGrid::SharedPtr msg)
@@ -569,24 +583,31 @@ void SimpleExplorer::controlLoop()
   float a_min = scan_->angle_min;
   float a_inc = scan_->angle_increment;
 
-  double front       = sectorMin(ranges, a_min, a_inc, -18.0,  18.0);
+  double lidar_front = sectorMin(ranges, a_min, a_inc, -18.0,  18.0);
   double front_left  = sectorMin(ranges, a_min, a_inc,  18.0,  45.0);
   double front_right = sectorMin(ranges, a_min, a_inc, -45.0, -18.0);
   double left        = sectorMin(ranges, a_min, a_inc,  45.0, 105.0);
   double right       = sectorMin(ranges, a_min, a_inc, -105.0, -45.0);
 
-  // Harmonized ToF & 2D LiDAR Multi-Sensor Fusion:
-  // Floor reflection rejection: when front LiDAR reports clear corridor (> 0.50m),
-  // a ToF reading in the floor reflection band (0.16m - 0.27m) is ground bounce.
-  bool tof_is_floor = (front > 0.50 && tof_range_ >= 0.16 && tof_range_ <= 0.27);
-  bool tof_critical = (!tof_is_floor && tof_range_ >= 0.06 && tof_range_ < 0.16);
-  bool tof_warning  = (!tof_is_floor && tof_range_ >= 0.06 && tof_range_ < 0.28 && front < 0.50);
+  // Intelligent Multi-Sensor Obstacle Clearance Fusion (ToF + 2D LiDAR):
+  // 1. VL53L0X ToF provides ground-level near-field obstacle detection (blindspot below LiDAR plane)
+  // 2. 2D LiDAR provides 360° panoramic spatial mapping and escape route planning
+  bool tof_fresh = ((now - tof_time_) < 0.6);
+  bool tof_valid = (tof_fresh && tof_range_ >= 0.04 && tof_range_ <= 0.42);
+
+  // Unified frontal clearance: true minimum of LiDAR forward corridor and low-profile ToF sensor
+  double front = tof_valid ? std::min(lidar_front, tof_range_) : lidar_front;
+
+  // Spatial clearance analysis from 360° LiDAR field to determine optimal escape direction
+  double clearance_left  = 0.55 * front_left + 0.45 * left;
+  double clearance_right = 0.55 * front_right + 0.45 * right;
+  double optimal_escape_dir = (clearance_left >= clearance_right) ? 1.0 : -1.0;
 
   // =========================================================================
   // 1. REVERSE STATE (Physical Stall Escape Maneuver)
   // =========================================================================
   if (state_ == ExplorerState::REVERSE) {
-    if ((now - reverse_start_time_) < 1.2) {
+    if ((now - reverse_start_time_) < 1.0) {
       cmd.linear.x = -0.10;
       cmd.angular.z = 0.0;
     } else {
@@ -596,6 +617,7 @@ void SimpleExplorer::controlLoop()
       last_stall_x_ = curr_x_;
       last_stall_y_ = curr_y_;
       forward_motion_start_time_ = now;
+      turn_direction_ = optimal_escape_dir;
       cmd.linear.x = 0.0;
       cmd.angular.z = turn_direction_ * 0.45;
     }
@@ -617,8 +639,8 @@ void SimpleExplorer::controlLoop()
       last_stall_y_ = curr_y_;
       cmd.linear.x = linear_speed_;
       cmd.angular.z = 0.0;
-    } else if (rotate_dur >= 0.6 && front >= clear_dist_ && front_left >= 0.22 && front_right >= 0.22 && !tof_critical) {
-      // Path clear! Resume forward exploration
+    } else if (rotate_dur >= 0.5 && front >= clear_dist_ && front_left >= 0.22 && front_right >= 0.22) {
+      // Path clear on BOTH LiDAR and ToF! Resume forward exploration
       state_ = ExplorerState::FRONTIER_SEEK;
       forward_motion_start_time_ = now;
       last_stall_check_time_ = now;
@@ -632,32 +654,26 @@ void SimpleExplorer::controlLoop()
     }
   }
   // =========================================================================
-  // 3. CRITICAL DISTANCE CHECK (< 0.28m on LiDAR or ToF)
+  // 3. CRITICAL DISTANCE CHECK (LiDAR or ToF < critical_dist_)
   // =========================================================================
-  else if (front < critical_dist_ || tof_critical) {
+  else if (front < critical_dist_) {
     state_ = ExplorerState::ROTATE;
     rotate_start_time_ = now;
-    if (right < left || front_right < front_left) {
-      turn_direction_ = 1.0;   // Turn Left CCW
-    } else {
-      turn_direction_ = -1.0;  // Turn Right CW
-    }
+    turn_direction_ = optimal_escape_dir;
     cmd.linear.x = 0.0;
     cmd.angular.z = turn_direction_ * 0.45;
   }
   // =========================================================================
-  // 4. PREDICTIVE CURVE (< 0.45m on LiDAR or ToF Warning)
+  // 4. PREDICTIVE ADAPTIVE CURVE (LiDAR or ToF < obstacle_dist_)
   // =========================================================================
-  else if (front < obstacle_dist_ || front_left < 0.25 || front_right < 0.25 || tof_warning) {
+  else if (front < obstacle_dist_ || front_left < 0.25 || front_right < 0.25) {
     state_ = ExplorerState::CURVE;
-    cmd.linear.x = linear_speed_;  // Maintain 0.12 m/s positive drive
-    if (front_left < front_right || left < right) {
-      cmd.angular.z = -0.22;       // Smooth curve steering
-      turn_direction_ = -1.0;
-    } else {
-      cmd.angular.z = 0.22;        // Smooth curve steering
-      turn_direction_ = 1.0;
-    }
+    turn_direction_ = optimal_escape_dir;
+
+    // Smooth proportional crawl deceleration: avoids abrupt ramming while keeping motor torque active
+    double speed_scale = std::clamp((front - critical_dist_) / (obstacle_dist_ - critical_dist_), 0.0, 1.0);
+    cmd.linear.x = 0.06 + (linear_speed_ - 0.06) * speed_scale;
+    cmd.angular.z = turn_direction_ * 0.32;  // Tight turning radius ~0.20m to clear obstacle footprint
   }
   // =========================================================================
   // 5. FRONTIER SEEKING & COMPLETE ROOM SYSTEMATIC EXPLORATION
@@ -685,8 +701,9 @@ void SimpleExplorer::controlLoop()
         cmd.linear.x = 0.0;
         cmd.angular.z = (heading_err > 0.0) ? 0.40 : -0.40;
       } else {
-        // Aligned towards frontier: Cruise forward at full linear speed
-        cmd.linear.x = linear_speed_;
+        // Aligned towards frontier: Cruise forward with smooth clearance speed scaling
+        double clearance_scale = std::clamp((front - critical_dist_) / (obstacle_dist_ - critical_dist_), 0.6, 1.0);
+        cmd.linear.x = linear_speed_ * clearance_scale;
         cmd.angular.z = std::clamp(1.0 * heading_err, -0.22, 0.22);
       }
     } else {

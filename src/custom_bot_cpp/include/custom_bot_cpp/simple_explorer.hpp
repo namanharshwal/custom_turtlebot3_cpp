@@ -141,8 +141,10 @@ private:
   double last_stall_y_{0.0};
   uint32_t stall_count_{0};
 
-  // ToF Range Cache
-  double tof_range_{2.0};
+  // ToF Range Cache & Moving Median Filter
+  double tof_range_{0.45};
+  double tof_time_{0.0};
+  std::vector<double> tof_history_;
 
   // TF2 Buffer & Listener
   std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
