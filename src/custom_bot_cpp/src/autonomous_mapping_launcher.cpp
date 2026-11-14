@@ -118,8 +118,24 @@ int main(int argc, char ** argv)
     "-p", "publish_rate:=20.0"
   }, 2);
 
-  // 4. Object Detector Node omitted during mapping to conserve 2GB RAM & prevent CPU brownout/VNC disconnects
-  // (Object detection is used during inspection, not room SLAM mapping)
+  // 4. Object Detector Node (Camera & YOLOv4-tiny live feedback in RViz2, delayed 3s)
+  if (access("/dev/video0", F_OK) == 0) {
+    launcher.spawnDelayed("object_detector_node", {
+      "ros2", "run", "custom_bot_cpp", "object_detector_node",
+      "--ros-args",
+      "-p", "video_device:=0",
+      "-p", "capture_width:=640",
+      "-p", "capture_height:=480",
+      "-p", "input_size:=320",
+      "-p", "conf_threshold:=0.20",
+      "-p", "nms_threshold:=0.40",
+      "-p", "detection_rate_hz:=1.5",
+      "-p", "publish_rate_hz:=10.0",
+      "-p", "publish_raw_image:=true",
+      "-p", "analogue_gain:=350",
+      "-p", "exposure:=1200"
+    }, 3);
+  }
 
   // 5. SLAM Toolbox (delayed 5s to allow gyro calibration and initial scans)
   launcher.spawnDelayed("slam_toolbox", {

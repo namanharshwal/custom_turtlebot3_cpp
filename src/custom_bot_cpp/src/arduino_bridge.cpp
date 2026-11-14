@@ -345,10 +345,9 @@ void ArduinoBridge::cmdVelCallback(const geometry_msgs::msg::Twist::SharedPtr ms
           r_pwm = 88;
         }
       } else {
-        // Calibrated baseline crawl PWM: Left=75, Right=80
-        // Drives robot at exactly 0.07 m/s (7.0 mm per LiDAR scan, 98% scan overlap)
-        int base_l = 75;
-        int base_r = 80;
+        // Calibrated baseline crawl PWM: Left=80, Right=85 (Overcomes carpet pile stiction & caster drag)
+        int base_l = 80;
+        int base_r = 85;
 
         // Differential steering offset proportional to target angular velocity
         int steer = static_cast<int>(std::round(ang * 25.0));
@@ -363,8 +362,8 @@ void ArduinoBridge::cmdVelCallback(const geometry_msgs::msg::Twist::SharedPtr ms
         }
 
         // Clamp PWM commands within strictly calibrated safe crawl limits
-        l_pwm = std::max(73, std::min(86, l_pwm));
-        r_pwm = std::max(78, std::min(90, r_pwm));
+        l_pwm = std::max(76, std::min(92, l_pwm));
+        r_pwm = std::max(80, std::min(96, r_pwm));
       }
     }
   }
