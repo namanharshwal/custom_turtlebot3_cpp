@@ -49,7 +49,7 @@ Visualization Manager:
       Reference Frame: <Fixed Frame>
       Value: true
     - Class: rviz_default_plugins/Image
-      Enabled: true
+      Enabled: false
       Max Value: 1
       Median window: 5
       Min Value: 0
@@ -353,6 +353,21 @@ Visualization Manager:
       Show Axes: false
       Show Descriptions: true
       Show Visual Aids: false
+      Value: true
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: Frontier Exploration Markers
+      Namespaces:
+        active_frontier_target: true
+        frontier_clusters: true
+        frontier_guidance_line: true
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /frontier_markers
       Value: true
   Enabled: true
   Global Options:

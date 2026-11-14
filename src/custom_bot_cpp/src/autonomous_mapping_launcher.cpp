@@ -118,24 +118,8 @@ int main(int argc, char ** argv)
     "-p", "publish_rate:=20.0"
   }, 2);
 
-  // 4. Object Detector Node (Camera & YOLOv4-tiny, delayed 3s)
-  if (access("/dev/video0", F_OK) == 0) {
-    launcher.spawnDelayed("object_detector_node", {
-      "ros2", "run", "custom_bot_cpp", "object_detector_node",
-      "--ros-args",
-      "-p", "video_device:=0",
-      "-p", "capture_width:=640",
-      "-p", "capture_height:=480",
-      "-p", "input_size:=320",
-      "-p", "conf_threshold:=0.20",
-      "-p", "nms_threshold:=0.40",
-      "-p", "detection_rate_hz:=2.0",
-      "-p", "publish_rate_hz:=10.0",
-      "-p", "publish_raw_image:=true",
-      "-p", "analogue_gain:=350",
-      "-p", "exposure:=1200"
-    }, 3);
-  }
+  // 4. Object Detector Node omitted during mapping to conserve 2GB RAM & prevent CPU brownout/VNC disconnects
+  // (Object detection is used during inspection, not room SLAM mapping)
 
   // 5. SLAM Toolbox (delayed 5s to allow gyro calibration and initial scans)
   launcher.spawnDelayed("slam_toolbox", {
@@ -147,18 +131,19 @@ int main(int argc, char ** argv)
 
   // 6. RViz2 (delayed 7s)
   launcher.spawnDelayed("rviz2", {
-    "rviz2", "-d", rviz_config
+    "bash", "-c",
+    "source /opt/ros/humble/setup.bash && source /home/ps/psnh_turtlebot_cpp_ws/install/setup.bash && export DISPLAY=:1 && exec rviz2 -d " + rviz_config
   }, 7);
 
   // 7. Simple Explorer (delayed 10s to let SLAM establish initial map)
   launcher.spawnDelayed("simple_explorer", {
     "ros2", "run", "custom_bot_cpp", "simple_explorer",
     "--ros-args",
-    "-p", "linear_speed:=0.05",
-    "-p", "angular_speed:=0.25",
+    "-p", "linear_speed:=0.12",
+    "-p", "angular_speed:=0.35",
     "-p", "obstacle_dist:=0.45",
-    "-p", "critical_dist:=0.30",
-    "-p", "clear_dist:=0.38",
+    "-p", "critical_dist:=0.28",
+    "-p", "clear_dist:=0.35",
     "-p", "wall_follow_dist:=0.40",
     "-p", "control_hz:=10.0"
   }, 10);

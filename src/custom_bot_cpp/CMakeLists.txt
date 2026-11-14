@@ -69,6 +69,10 @@ ament_target_dependencies(simple_explorer
   sensor_msgs
   geometry_msgs
   nav_msgs
+  visualization_msgs
+  tf2
+  tf2_ros
+  tf2_geometry_msgs
 )
 
 # ── 3. teleop_key_hold ─────────────────────────────────────────
