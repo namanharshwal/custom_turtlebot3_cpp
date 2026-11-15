@@ -30,6 +30,7 @@
 
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/range.hpp"
+#include "vl53l0x_sensor_cpp/tof.h"
 
 namespace vl53l0x_sensor_cpp
 {
@@ -55,7 +56,6 @@ private:
   double field_of_view_;
   double publish_rate_;
 
-  int i2c_fd_{-1};
   bool hardware_connected_{false};
 
   rclcpp::Publisher<sensor_msgs::msg::Range>::SharedPtr range_pub_;

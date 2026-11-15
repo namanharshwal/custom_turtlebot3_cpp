@@ -22,17 +22,12 @@
 //
 // Description:
 // Pure C++17 ROS 2 Driver for STMicroelectronics VL53L0X Time-of-Flight (ToF) Distance Sensor.
-// Communicates directly over hardware I2C (/dev/i2c-1 @ 0x29) via Linux kernel I2C ioctl.
-// Publishes standard sensor_msgs/msg/Range on /tof/range for real-time local obstacle
-// avoidance without contaminating or distorting the 2D LiDAR static SLAM /map.
+// Communicates directly over hardware I2C (/dev/i2c-1 @ 0x29) via calibrated Linux I2C registers.
+// Publishes standard sensor_msgs/msg/Range on /tof/range for real-time multi-sensor obstacle avoidance.
 // ==============================================================================
 
 #include "vl53l0x_sensor_cpp/vl53l0x_driver.hpp"
 
-#include <fcntl.h>
-#include <unistd.h>
-#include <sys/ioctl.h>
-#include <linux/i2c-dev.h>
 #include <cmath>
 #include <sstream>
 #include <iomanip>
@@ -70,7 +65,7 @@ void VL53L0XNode::declareParameters()
   this->declare_parameter<int>("i2c_address", 0x29);
   this->declare_parameter<std::string>("frame_id", "tof_link");
   this->declare_parameter<double>("min_range", 0.03);      // 3 cm minimum
-  this->declare_parameter<double>("max_range", 0.45);      // 45 cm maximum (harmonized with LiDAR obstacle distance)
+  this->declare_parameter<double>("max_range", 2.00);      // 2.00 m maximum
   this->declare_parameter<double>("field_of_view", 0.4363); // 25° conical cone
   this->declare_parameter<double>("publish_rate", 20.0);   // 20 Hz update rate
 
@@ -85,103 +80,37 @@ void VL53L0XNode::declareParameters()
 
 void VL53L0XNode::initI2C()
 {
-  std::stringstream ss;
-  ss << "/dev/i2c-" << i2c_bus_;
-  std::string dev_path = ss.str();
-
-  i2c_fd_ = open(dev_path.c_str(), O_RDWR);
-  if (i2c_fd_ < 0) {
-    RCLCPP_WARN(this->get_logger(),
-                "Cannot open %s. I2C hardware bus not available. Operating in standby mode.",
-                dev_path.c_str());
+  // Initialize VL53L0X hardware using the proven Linux I2C driver (0 = standard fast mode up to 1.2m)
+  int ret = tofInit(i2c_bus_, i2c_address_, 0);
+  if (ret == 1) {
+    hardware_connected_ = true;
+    int model = 0, rev = 0;
+    tofGetModel(&model, &rev);
+    RCLCPP_INFO(this->get_logger(),
+                "VL53L0X hardware verified and calibrated at 0x%02X (Model ID: %d, Rev: %d)",
+                i2c_address_, model, rev);
+  } else {
     hardware_connected_ = false;
-    return;
-  }
-
-  if (ioctl(i2c_fd_, I2C_SLAVE, i2c_address_) < 0) {
     RCLCPP_WARN(this->get_logger(),
-                "Failed to acquire bus access / talk to slave 0x%02X on %s.",
-                i2c_address_, dev_path.c_str());
-    close(i2c_fd_);
-    i2c_fd_ = -1;
-    hardware_connected_ = false;
-    return;
+                "Failed to initialize VL53L0X on /dev/i2c-%d @ 0x%02X. Operating in standby mode.",
+                i2c_bus_, i2c_address_);
   }
-
-  // Attempt communication test (probe byte read)
-  uint8_t reg = 0xC0; // Identification model ID register
-  if (write(i2c_fd_, &reg, 1) == 1) {
-    uint8_t val = 0;
-    if (read(i2c_fd_, &val, 1) == 1) {
-      hardware_connected_ = true;
-      RCLCPP_INFO(this->get_logger(),
-                  "VL53L0X hardware verified at 0x%02X (Model ID: 0x%02X)",
-                  i2c_address_, val);
-      return;
-    }
-  }
-
-  hardware_connected_ = false;
-  RCLCPP_INFO(this->get_logger(),
-              "VL53L0X sensor standing by on /dev/i2c-%d @ 0x%02X.",
-              i2c_bus_, i2c_address_);
 }
 
 void VL53L0XNode::closeI2C()
 {
-  if (i2c_fd_ >= 0) {
-    close(i2c_fd_);
-    i2c_fd_ = -1;
-  }
+  hardware_connected_ = false;
 }
 
 double VL53L0XNode::readDistanceMeters()
 {
-  if (!hardware_connected_ || i2c_fd_ < 0) {
+  if (!hardware_connected_) {
     return max_range_;
   }
 
-  // 1. Trigger single-shot range measurement: write 0x01 to SYSRANGE_START (0x00)
-  uint8_t cmd[2] = {0x00, 0x01};
-  if (write(i2c_fd_, cmd, 2) != 2) {
-    return max_range_;
-  }
-
-  // 2. Poll for measurement completion (register 0x00 bit 0 clears or timeout 30ms)
-  int attempts = 0;
-  uint8_t status = 1;
-  while (attempts < 30) {
-    uint8_t reg = 0x00;
-    if (write(i2c_fd_, &reg, 1) != 1 || read(i2c_fd_, &status, 1) != 1) {
-      break;
-    }
-    if ((status & 0x01) == 0) {
-      break;
-    }
-    usleep(1000);
-    attempts++;
-  }
-
-  // 3. Read range result registers (0x14 + offset 10 and 11)
-  uint8_t reg = 0x14;
-  if (write(i2c_fd_, &reg, 1) != 1) {
-    return max_range_;
-  }
-
-  uint8_t buf[16] = {0};
-  if (read(i2c_fd_, buf, 16) != 16) {
-    return max_range_;
-  }
-
-  uint8_t range_status = (buf[0] & 0x78) >> 3;
-  // If target is out of bounds (status 8/11) or phase/signal fail (status 6/2), field is unobstructed
-  if (range_status == 8 || range_status == 6 || range_status == 11 || range_status == 2) {
-    return max_range_;
-  }
-
-  uint16_t dist_mm = (static_cast<uint16_t>(buf[10]) << 8) | buf[11];
-  uint16_t max_mm = static_cast<uint16_t>(max_range_ * 1000.0);
-  if (dist_mm <= 35 || dist_mm > max_mm) {
+  int dist_mm = tofReadDistance();
+  // If out-of-range (>2000mm) or invalid (<25mm or timeout -1), return clear horizon (max_range_)
+  if (dist_mm < 25 || dist_mm > 2000) {
     return max_range_;
   }
 

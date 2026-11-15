@@ -593,7 +593,7 @@ void SimpleExplorer::controlLoop()
   // 1. VL53L0X ToF provides ground-level near-field obstacle detection (blindspot below LiDAR plane)
   // 2. 2D LiDAR provides 360° panoramic spatial mapping and escape route planning
   bool tof_fresh = ((now - tof_time_) < 0.6);
-  bool tof_valid = (tof_fresh && tof_range_ >= 0.04 && tof_range_ <= 0.42);
+  bool tof_valid = (tof_fresh && tof_range_ >= 0.03 && tof_range_ <= 1.20);
 
   // Unified frontal clearance: true minimum of LiDAR forward corridor and low-profile ToF sensor
   double front = tof_valid ? std::min(lidar_front, tof_range_) : lidar_front;
@@ -629,15 +629,13 @@ void SimpleExplorer::controlLoop()
     double rotate_dur = now - rotate_start_time_;
 
     if (rotate_dur > 3.5) {
-      // 360° LiDAR rescue: find maximum radial clearance sector
-      double best_clearance_angle = findBestClearanceAngle(ranges, a_min, a_inc);
-      turn_direction_ = (best_clearance_angle >= 0.0) ? 1.0 : -1.0;
-      state_ = ExplorerState::FRONTIER_SEEK;
-      forward_motion_start_time_ = now;
+      // If unable to clear within 3.5s, reverse to open up clearance rather than forcing forward
+      state_ = ExplorerState::REVERSE;
+      reverse_start_time_ = now;
       last_stall_check_time_ = now;
       last_stall_x_ = curr_x_;
       last_stall_y_ = curr_y_;
-      cmd.linear.x = linear_speed_;
+      cmd.linear.x = -0.10;
       cmd.angular.z = 0.0;
     } else if (rotate_dur >= 0.5 && front >= clear_dist_ && front_left >= 0.22 && front_right >= 0.22) {
       // Path clear on BOTH LiDAR and ToF! Resume forward exploration
@@ -657,11 +655,19 @@ void SimpleExplorer::controlLoop()
   // 3. CRITICAL DISTANCE CHECK (LiDAR or ToF < critical_dist_)
   // =========================================================================
   else if (front < critical_dist_) {
-    state_ = ExplorerState::ROTATE;
-    rotate_start_time_ = now;
-    turn_direction_ = optimal_escape_dir;
-    cmd.linear.x = 0.0;
-    cmd.angular.z = turn_direction_ * 0.45;
+    if (front < 0.22) {
+      // Very close to barrier (<22cm): Reverse first to clear bumper arc before pivoting
+      state_ = ExplorerState::REVERSE;
+      reverse_start_time_ = now;
+      cmd.linear.x = -0.10;
+      cmd.angular.z = 0.0;
+    } else {
+      state_ = ExplorerState::ROTATE;
+      rotate_start_time_ = now;
+      turn_direction_ = optimal_escape_dir;
+      cmd.linear.x = 0.0;
+      cmd.angular.z = turn_direction_ * 0.45;
+    }
   }
   // =========================================================================
   // 4. PREDICTIVE ADAPTIVE CURVE (LiDAR or ToF < obstacle_dist_)

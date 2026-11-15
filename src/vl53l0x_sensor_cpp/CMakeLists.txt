@@ -20,6 +20,7 @@ include_directories(
 # 1. Driver Node Executable
 add_executable(vl53l0x_node
   src/vl53l0x_node.cpp
+  src/tof.c
 )
 ament_target_dependencies(vl53l0x_node
   rclcpp
