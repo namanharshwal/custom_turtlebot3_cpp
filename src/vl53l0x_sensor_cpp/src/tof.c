@@ -859,3 +859,12 @@ int i;
 
 } /* tofGetModel() */
 
+
+int tofReadRange(int *pDistance, int *pStatus)
+{
+  int d = tofReadDistance();
+  int st = (readReg(RESULT_RANGE_STATUS) & 0x78) >> 3;
+  if (pDistance) *pDistance = d;
+  if (pStatus) *pStatus = st;
+  return d;
+}

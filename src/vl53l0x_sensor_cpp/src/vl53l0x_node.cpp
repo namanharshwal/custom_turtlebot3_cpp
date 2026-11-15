@@ -108,13 +108,17 @@ double VL53L0XNode::readDistanceMeters()
     return max_range_;
   }
 
-  int dist_mm = tofReadDistance();
-  // If out-of-range (>2000mm) or invalid (<25mm or timeout -1), return clear horizon (max_range_)
-  if (dist_mm < 25 || dist_mm > 2000) {
-    return max_range_;
+  int dist_mm = 0;
+  int status = 0;
+  tofReadRange(&dist_mm, &status);
+
+  // Status == 0 indicates a pristine, valid photon reflection from an actual physical target
+  if (status == 0 && dist_mm >= 30 && dist_mm <= 1500) {
+    return static_cast<double>(dist_mm) / 1000.0;
   }
 
-  return static_cast<double>(dist_mm) / 1000.0;
+  // Non-zero status (status 11, 2, 4, etc.) or out-of-range means unobstructed open space horizon
+  return max_range_;
 }
 
 void VL53L0XNode::timerCallback()

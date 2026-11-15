@@ -11,6 +11,7 @@ extern "C" {
 int tofInit(int iChan, int iAddr, int bLongRange);
 int tofGetModel(int *model, int *revision);
 int tofReadDistance(void);
+int tofReadRange(int *pDistance, int *pStatus);
 
 #ifdef __cplusplus
 }
