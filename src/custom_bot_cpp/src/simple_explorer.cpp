@@ -641,28 +641,28 @@ void SimpleExplorer::controlLoop()
   double right       = sectorMin(ranges, a_min, a_inc, -105.0, -45.0);
 
   // ── Intelligent Multi-Sensor Obstacle Clearance Fusion (ToF + 2D LiDAR) ─────
-  // 1. VL53L0X ToF (z = 3.5cm) detects low-profile obstacles below 2D LiDAR plane (z = 12cm).
-  // 2. VL53L0X conical beam (25° FoV) causes ground-grazing returns at ~0.16m-0.23m.
-  // 3. Multi-Sensor Cross-Validation Rules:
-  //    Rule A: Critical bumper proximity (ToF < 0.15m) -> True near-bumper obstacle!
-  //    Rule B: Mid-range low obstacle (0.24m <= ToF <= 0.80m) -> True obstacle outside ground horizon!
-  //    Rule C: Ambiguous band (0.15m <= ToF <= 0.23m) -> Confirmed if LiDAR also detects obstacle within 0.45m!
+  // 1. 2D LiDAR (z = 12cm) is the primary room geometry and corridor clearance authority.
+  // 2. VL53L0X ToF (z = 3.5cm) guards low-profile bumper blindspots below the LiDAR plane.
+  // 3. ToF ranging is strictly bounded and limited as per LiDAR:
+  //    - Rule A: Critical near-bumper obstacle (< 0.15m) -> Emergency avoidance.
+  //    - Rule B: Corroborated low obstacle (< 0.40m) -> Only active when approaching obstacles/walls
+  //              as confirmed by LiDAR (lidar_front < 0.60m).
+  //    - Rule C: Open corridor protection (lidar_front >= 0.60m) -> Any ToF reading > 0.15m is optical
+  //              carpet-grazing return and is filtered out so it never falsely halts the robot!
   bool tof_fresh = ((now - tof_time_) < 0.6);
   bool tof_is_real_obstacle = false;
 
-  if (tof_fresh && tof_range_ >= 0.04 && tof_range_ <= 1.20) {
+  if (tof_fresh && tof_range_ >= 0.04 && tof_range_ <= 0.60) {
     if (tof_range_ < 0.15) {
+      // Direct bumper proximity danger: low object immediately ahead
       tof_is_real_obstacle = true;
-    } else if (tof_range_ > 0.23 && tof_range_ <= 0.80) {
+    } else if (tof_range_ < obstacle_dist_ && lidar_front < 0.60) {
+      // Approaching obstacle confirmed by LiDAR: ToF provides early low-profile alert
       tof_is_real_obstacle = true;
-    } else if (tof_range_ >= 0.15 && tof_range_ <= 0.23) {
-      if (lidar_front < 0.45) {
-        tof_is_real_obstacle = true;
-      }
     }
   }
 
-  // Unified frontal clearance:
+  // Unified frontal clearance strictly bounded by sensor fusion:
   double front = tof_is_real_obstacle ? std::min(lidar_front, tof_range_) : lidar_front;
 
   // Spatial clearance analysis from 360° LiDAR field to determine optimal escape direction
@@ -730,12 +730,6 @@ void SimpleExplorer::controlLoop()
   // 3. CRITICAL / NEAR OBSTACLE DETECTION (Checked during forward motion)
   // =========================================================================
   else if (front < critical_dist_ || front_left < 0.22 || front_right < 0.22) {
-    // If pursuing a frontier that led to an obstacle, blacklist it immediately
-    if (has_target_frontier_) {
-      blacklist_.push_back({target_frontier_.centroid_x, target_frontier_.centroid_y, now});
-      has_target_frontier_ = false;
-    }
-
     if (front < 0.20) {
       // Very close to barrier (<20cm): Reverse first to clear bumper arc before pivoting
       state_ = ExplorerState::REVERSE;
@@ -754,12 +748,7 @@ void SimpleExplorer::controlLoop()
   // 4. PREDICTIVE OBSTACLE DETECTION (LiDAR or ToF < obstacle_dist_)
   // =========================================================================
   else if (front < obstacle_dist_) {
-    // Forward path obstructed: blacklist obstructed target and pivot away cleanly
-    if (has_target_frontier_) {
-      blacklist_.push_back({target_frontier_.centroid_x, target_frontier_.centroid_y, now});
-      has_target_frontier_ = false;
-    }
-
+    // Local obstacle detected ahead: pivot cleanly away to route around it
     state_ = ExplorerState::ROTATE;
     rotate_start_time_ = now;
     turn_direction_ = optimal_escape_dir;
@@ -888,10 +877,6 @@ void SimpleExplorer::controlLoop()
         reverse_start_time_ = now;
         cmd.linear.x = -0.10;
         cmd.angular.z = 0.0;
-        if (has_target_frontier_) {
-          blacklist_.push_back({target_frontier_.centroid_x, target_frontier_.centroid_y, now});
-          has_target_frontier_ = false;
-        }
       }
     }
   } else {

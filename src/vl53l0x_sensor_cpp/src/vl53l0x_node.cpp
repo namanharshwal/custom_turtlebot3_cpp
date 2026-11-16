@@ -65,7 +65,7 @@ void VL53L0XNode::declareParameters()
   this->declare_parameter<int>("i2c_address", 0x29);
   this->declare_parameter<std::string>("frame_id", "tof_link");
   this->declare_parameter<double>("min_range", 0.03);      // 3 cm minimum
-  this->declare_parameter<double>("max_range", 2.00);      // 2.00 m maximum
+  this->declare_parameter<double>("max_range", 0.60);      // 60 cm calibrated maximum (bounds ToF to bumper blindspot)
   this->declare_parameter<double>("field_of_view", 0.4363); // 25° conical cone
   this->declare_parameter<double>("publish_rate", 20.0);   // 20 Hz update rate
 
@@ -113,9 +113,10 @@ double VL53L0XNode::readDistanceMeters()
   tofReadRange(&dist_mm, &status);
 
   // VL53L0X millimeter distance validation:
-  // Accept valid return readings in physical detection zone [30mm, 1500mm]
+  // Accept valid return readings in physical bumper detection zone [30mm, 600mm]
   // (Filter out sentinel error codes 8190/8191 which signify out-of-range horizon)
-  if (dist_mm >= 30 && dist_mm <= 1500 && dist_mm != 8190 && dist_mm != 8191) {
+  int max_mm = static_cast<int>(max_range_ * 1000.0);
+  if (dist_mm >= 30 && dist_mm <= max_mm && dist_mm != 8190 && dist_mm != 8191) {
     return static_cast<double>(dist_mm) / 1000.0;
   }
 

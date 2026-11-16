@@ -60,7 +60,7 @@ int main(int argc, char ** argv)
       "-p", "i2c_address:=41", // 0x29 decimal is 41
       "-p", "frame_id:=tof_link",
       "-p", "min_range:=0.03",
-      "-p", "max_range:=2.00",
+      "-p", "max_range:=0.60",
       "-p", "field_of_view:=0.4363",
       "-p", "publish_rate:=20.0",
       nullptr

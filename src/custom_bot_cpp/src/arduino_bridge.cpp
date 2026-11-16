@@ -339,17 +339,17 @@ void ArduinoBridge::cmdVelCallback(const geometry_msgs::msg::Twist::SharedPtr ms
       if (in_kick) {
         if (stall_level_ >= 2) {
           // Full breakaway boost
-          l_pwm = 105;
-          r_pwm = 110;
+          l_pwm = 110;
+          r_pwm = 115;
         } else {
           // Normal start kick: overcomes caster stiction
-          l_pwm = 84;
-          r_pwm = 88;
+          l_pwm = 98;
+          r_pwm = 104;
         }
       } else {
-        // Calibrated baseline crawl PWM: Left=80, Right=85 (Overcomes carpet pile stiction & caster drag)
-        int base_l = 80;
-        int base_r = 85;
+        // Calibrated forward crawl PWM on carpet: Left=92, Right=98
+        int base_l = 92;
+        int base_r = 98;
 
         // Differential steering offset proportional to target angular velocity
         int steer = static_cast<int>(std::round(ang * 25.0));
@@ -363,9 +363,9 @@ void ArduinoBridge::cmdVelCallback(const geometry_msgs::msg::Twist::SharedPtr ms
           r_pwm = base_r + std::abs(steer);
         }
 
-        // Clamp PWM commands within strictly calibrated safe crawl limits
-        l_pwm = std::max(76, std::min(92, l_pwm));
-        r_pwm = std::max(80, std::min(96, r_pwm));
+        // Clamp PWM commands within safe rolling limits
+        l_pwm = std::max(85, std::min(115, l_pwm));
+        r_pwm = std::max(90, std::min(120, r_pwm));
       }
     }
   }
