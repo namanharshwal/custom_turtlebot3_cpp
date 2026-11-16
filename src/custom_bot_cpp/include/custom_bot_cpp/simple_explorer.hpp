@@ -96,10 +96,10 @@ private:
   // Configuration Parameters
   double linear_speed_{0.12};
   double angular_speed_{0.35};
-  double obstacle_dist_{0.45};
-  double critical_dist_{0.28};
-  double clear_dist_{0.35};
-  double wall_follow_dist_{0.40};
+  double obstacle_dist_{0.40};
+  double critical_dist_{0.25};
+  double clear_dist_{0.48};
+  double wall_follow_dist_{0.38};
   double control_hz_{10.0};
 
   // FSM State Variables
@@ -142,7 +142,7 @@ private:
   uint32_t stall_count_{0};
 
   // ToF Range Cache & Moving Median Filter
-  double tof_range_{0.45};
+  double tof_range_{2.00};
   double tof_time_{0.0};
   std::vector<double> tof_history_;
 

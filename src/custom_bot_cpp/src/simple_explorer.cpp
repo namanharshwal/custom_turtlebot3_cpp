@@ -111,10 +111,10 @@ void SimpleExplorer::declareParameters()
 {
   this->declare_parameter<double>("linear_speed", 0.12);
   this->declare_parameter<double>("angular_speed", 0.35);
-  this->declare_parameter<double>("obstacle_dist", 0.45);
-  this->declare_parameter<double>("critical_dist", 0.28);
-  this->declare_parameter<double>("clear_dist", 0.35);
-  this->declare_parameter<double>("wall_follow_dist", 0.40);
+  this->declare_parameter<double>("obstacle_dist", 0.40);
+  this->declare_parameter<double>("critical_dist", 0.25);
+  this->declare_parameter<double>("clear_dist", 0.48);
+  this->declare_parameter<double>("wall_follow_dist", 0.38);
   this->declare_parameter<double>("control_hz", 10.0);
 
   linear_speed_     = this->get_parameter("linear_speed").as_double();
@@ -602,6 +602,11 @@ void SimpleExplorer::controlLoop()
   double clearance_left  = 0.55 * front_left + 0.45 * left;
   double clearance_right = 0.55 * front_right + 0.45 * right;
   double optimal_escape_dir = (clearance_left >= clearance_right) ? 1.0 : -1.0;
+  if (front_left < 0.25 && front_right < 0.25) {
+    // Both front flanks constricted: query full 360° LiDAR scan for maximum open escape angle
+    double best_angle = findBestClearanceAngle(ranges, a_min, a_inc);
+    optimal_escape_dir = (best_angle >= 0.0) ? 1.0 : -1.0;
+  }
 
   // =========================================================================
   // 1. REVERSE STATE (Physical Stall Escape Maneuver)
@@ -637,8 +642,8 @@ void SimpleExplorer::controlLoop()
       last_stall_y_ = curr_y_;
       cmd.linear.x = -0.10;
       cmd.angular.z = 0.0;
-    } else if (rotate_dur >= 0.5 && front >= clear_dist_ && front_left >= 0.22 && front_right >= 0.22) {
-      // Path clear on BOTH LiDAR and ToF! Resume forward exploration
+    } else if (rotate_dur >= 1.2 && front >= clear_dist_ && front_left >= 0.25 && front_right >= 0.25) {
+      // Path clear on BOTH LiDAR and ToF (> clear_dist_) with flank clearance! Resume forward exploration
       state_ = ExplorerState::FRONTIER_SEEK;
       forward_motion_start_time_ = now;
       last_stall_check_time_ = now;
@@ -647,16 +652,17 @@ void SimpleExplorer::controlLoop()
       cmd.linear.x = linear_speed_;
       cmd.angular.z = 0.0;
     } else {
+      // Keep rotating in the latched direction
       cmd.linear.x = 0.0;
       cmd.angular.z = turn_direction_ * 0.45;
     }
   }
   // =========================================================================
-  // 3. CRITICAL DISTANCE CHECK (LiDAR or ToF < critical_dist_)
+  // 3. CRITICAL / NEAR OBSTACLE DETECTION (Checked during forward motion)
   // =========================================================================
-  else if (front < critical_dist_) {
-    if (front < 0.22) {
-      // Very close to barrier (<22cm): Reverse first to clear bumper arc before pivoting
+  else if (front < critical_dist_ || front_left < 0.22 || front_right < 0.22) {
+    if (front < 0.20) {
+      // Very close to barrier (<20cm): Reverse first to clear bumper arc before pivoting
       state_ = ExplorerState::REVERSE;
       reverse_start_time_ = now;
       cmd.linear.x = -0.10;
@@ -670,16 +676,15 @@ void SimpleExplorer::controlLoop()
     }
   }
   // =========================================================================
-  // 4. PREDICTIVE ADAPTIVE CURVE (LiDAR or ToF < obstacle_dist_)
+  // 4. PREDICTIVE OBSTACLE DETECTION (LiDAR or ToF < obstacle_dist_)
   // =========================================================================
-  else if (front < obstacle_dist_ || front_left < 0.25 || front_right < 0.25) {
-    state_ = ExplorerState::CURVE;
+  else if (front < obstacle_dist_) {
+    // Forward path obstructed: pivot away cleanly
+    state_ = ExplorerState::ROTATE;
+    rotate_start_time_ = now;
     turn_direction_ = optimal_escape_dir;
-
-    // Smooth proportional crawl deceleration: avoids abrupt ramming while keeping motor torque active
-    double speed_scale = std::clamp((front - critical_dist_) / (obstacle_dist_ - critical_dist_), 0.0, 1.0);
-    cmd.linear.x = 0.06 + (linear_speed_ - 0.06) * speed_scale;
-    cmd.angular.z = turn_direction_ * 0.32;  // Tight turning radius ~0.20m to clear obstacle footprint
+    cmd.linear.x = 0.0;
+    cmd.angular.z = turn_direction_ * 0.45;
   }
   // =========================================================================
   // 5. FRONTIER SEEKING & COMPLETE ROOM SYSTEMATIC EXPLORATION
@@ -710,7 +715,17 @@ void SimpleExplorer::controlLoop()
         // Aligned towards frontier: Cruise forward with smooth clearance speed scaling
         double clearance_scale = std::clamp((front - critical_dist_) / (obstacle_dist_ - critical_dist_), 0.6, 1.0);
         cmd.linear.x = linear_speed_ * clearance_scale;
-        cmd.angular.z = std::clamp(1.0 * heading_err, -0.22, 0.22);
+
+        // Side repulsive bias if grazing obstacles on left or right flanks:
+        double side_bias = 0.0;
+        if (front_left < 0.30) {
+          side_bias -= 0.12 * (0.30 - front_left) / 0.10;
+        }
+        if (front_right < 0.30) {
+          side_bias += 0.12 * (0.30 - front_right) / 0.10;
+        }
+
+        cmd.angular.z = std::clamp(1.0 * heading_err + side_bias, -0.28, 0.28);
       }
     } else {
       // No active frontier yet (or initial room discovery): systematic wall following
@@ -733,7 +748,7 @@ void SimpleExplorer::controlLoop()
   // 6. PHYSICAL ANTI-STALL GUARDIAN (Layer 2 Safe)
   // =========================================================================
   // Strictly monitored during active forward translational cruising
-  if ((state_ == ExplorerState::FRONTIER_SEEK || state_ == ExplorerState::WALL_FOLLOW || state_ == ExplorerState::CURVE)
+  if ((state_ == ExplorerState::FRONTIER_SEEK || state_ == ExplorerState::WALL_FOLLOW)
       && cmd.linear.x >= 0.05) {
     if ((now - forward_motion_start_time_) >= 2.5) {
       if ((now - last_stall_check_time_) >= 2.5) {

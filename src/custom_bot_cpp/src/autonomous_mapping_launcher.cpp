@@ -157,10 +157,10 @@ int main(int argc, char ** argv)
     "--ros-args",
     "-p", "linear_speed:=0.12",
     "-p", "angular_speed:=0.35",
-    "-p", "obstacle_dist:=0.42",
-    "-p", "critical_dist:=0.26",
-    "-p", "clear_dist:=0.35",
-    "-p", "wall_follow_dist:=0.40",
+    "-p", "obstacle_dist:=0.40",
+    "-p", "critical_dist:=0.25",
+    "-p", "clear_dist:=0.48",
+    "-p", "wall_follow_dist:=0.38",
     "-p", "control_hz:=10.0"
   }, 10);
 
