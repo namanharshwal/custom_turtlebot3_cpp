@@ -707,25 +707,27 @@ void SimpleExplorer::controlLoop()
       double heading_err = std::atan2(std::sin(goal_angle - curr_yaw_),
                                       std::cos(goal_angle - curr_yaw_));
 
-      if (std::abs(heading_err) > 0.35) {
-        // Heading error > 20°: Pure in-place rotation with maximum differential torque (PWM ±85)
+      if (std::abs(heading_err) > 0.70) {
+        // Heading error > 40°: Crisp in-place pivot with differential torque
         cmd.linear.x = 0.0;
-        cmd.angular.z = (heading_err > 0.0) ? 0.40 : -0.40;
+        cmd.angular.z = (heading_err > 0.0) ? 0.45 : -0.45;
       } else {
-        // Aligned towards frontier: Cruise forward with smooth clearance speed scaling
-        double clearance_scale = std::clamp((front - critical_dist_) / (obstacle_dist_ - critical_dist_), 0.6, 1.0);
-        cmd.linear.x = linear_speed_ * clearance_scale;
+        // Continuous smooth pursuit towards target frontier:
+        // Forward speed scales smoothly with alignment cosine and frontal clearance
+        double heading_cos = std::max(0.3, std::cos(heading_err));
+        double clearance_scale = std::clamp((front - critical_dist_) / (obstacle_dist_ - critical_dist_), 0.5, 1.0);
+        cmd.linear.x = linear_speed_ * clearance_scale * heading_cos;
 
         // Side repulsive bias if grazing obstacles on left or right flanks:
         double side_bias = 0.0;
         if (front_left < 0.30) {
-          side_bias -= 0.12 * (0.30 - front_left) / 0.10;
+          side_bias -= 0.15 * (0.30 - front_left) / 0.10;
         }
         if (front_right < 0.30) {
-          side_bias += 0.12 * (0.30 - front_right) / 0.10;
+          side_bias += 0.15 * (0.30 - front_right) / 0.10;
         }
 
-        cmd.angular.z = std::clamp(1.0 * heading_err + side_bias, -0.28, 0.28);
+        cmd.angular.z = std::clamp(1.2 * heading_err + side_bias, -0.40, 0.40);
       }
     } else {
       // No active frontier yet (or initial room discovery): systematic wall following

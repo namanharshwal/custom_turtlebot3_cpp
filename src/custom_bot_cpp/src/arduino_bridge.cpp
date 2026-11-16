@@ -306,9 +306,9 @@ void ArduinoBridge::cmdVelCallback(const geometry_msgs::msg::Twist::SharedPtr ms
 
     // CASE 1: Pure In-Place Rotation (Zero linear speed)
     if (std::abs(lin) < DEADBAND) {
-      int rot_base = 85;
-      if (in_kick && stall_level_ >= 2) {
-        rot_base = 105;  // Anti-stall boost for carpet pivot friction
+      int rot_base = 92;
+      if (in_kick || stall_level_ >= 1) {
+        rot_base = 108;  // Guaranteed breakaway torque on carpet
       }
 
       if (ang > 0.0) {
