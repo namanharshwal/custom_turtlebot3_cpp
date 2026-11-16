@@ -306,9 +306,11 @@ void ArduinoBridge::cmdVelCallback(const geometry_msgs::msg::Twist::SharedPtr ms
 
     // CASE 1: Pure In-Place Rotation (Zero linear speed)
     if (std::abs(lin) < DEADBAND) {
-      int rot_base = 92;
-      if (in_kick || stall_level_ >= 1) {
-        rot_base = 108;  // Guaranteed breakaway torque on carpet
+      int rot_base = 90;
+      if (stall_level_ >= 2) {
+        rot_base = 118;  // High breakaway torque if persistently stalled on carpet
+      } else if (in_kick || stall_level_ >= 1) {
+        rot_base = 104;  // Calibrated breakaway torque on carpet
       }
 
       if (ang > 0.0) {
@@ -547,6 +549,8 @@ void ArduinoBridge::updateOdometry(long raw_right_ticks, long raw_left_ticks,
   x_ += d_center * std::cos(mid_theta);
   y_ += d_center * std::sin(mid_theta);
   theta_ += d_theta;
+  while (theta_ > M_PI)  theta_ -= 2.0 * M_PI;
+  while (theta_ < -M_PI) theta_ += 2.0 * M_PI;
 
   // Compute planar quaternion output: qz = sin(theta / 2), qw = cos(theta / 2)
   double qz_out = std::sin(theta_ / 2.0);

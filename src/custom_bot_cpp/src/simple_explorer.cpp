@@ -97,6 +97,9 @@ SimpleExplorer::SimpleExplorer(const rclcpp::NodeOptions & options)
   last_stall_check_time_ = now;
   forward_motion_start_time_ = now;
   last_frontier_search_time_ = now;
+  commit_forward_until_ = 0.0;
+  last_rot_stall_check_time_ = now;
+  last_rot_stall_yaw_ = 0.0;
 
   timer_ = this->create_wall_timer(
     std::chrono::milliseconds(static_cast<int>(1000.0 / control_hz_)),
@@ -341,6 +344,11 @@ void SimpleExplorer::findFrontiers()
       // Cost function: J = Distance - 0.03 * min(Size, 40)
       cl.score = cl.distance - 0.03 * std::min(cl.size, static_cast<size_t>(40));
 
+      // Heavily penalize clusters blocked by an obstacle in direct line of sight
+      if (isPathObstructed(curr_x_, curr_y_, cl.centroid_x, cl.centroid_y)) {
+        cl.score += 8.0;
+      }
+
       if (cl.score < best_score) {
         best_score = cl.score;
         best_idx = static_cast<int>(i);
@@ -525,6 +533,44 @@ double SimpleExplorer::findBestClearanceAngle(const std::vector<float> & ranges,
   return best_angle;
 }
 
+bool SimpleExplorer::isPathObstructed(double x0, double y0, double x1, double y1) const
+{
+  if (!map_) return false;
+
+  double dx = x1 - x0;
+  double dy = y1 - y0;
+  double dist = std::hypot(dx, dy);
+  if (dist < 0.15) return false;
+
+  double res = map_->info.resolution;
+  int n_steps = static_cast<int>(dist / res);
+  if (n_steps < 3) return false;
+
+  double origin_x = map_->info.origin.position.x;
+  double origin_y = map_->info.origin.position.y;
+  int width = map_->info.width;
+  int height = map_->info.height;
+  const auto & data = map_->data;
+
+  // Step along the ray (skip first 2 steps near robot and last 2 steps near frontier)
+  for (int i = 2; i < n_steps - 2; ++i) {
+    double t = static_cast<double>(i) / n_steps;
+    double px = x0 + t * dx;
+    double py = y0 + t * dy;
+
+    int c = static_cast<int>((px - origin_x) / res);
+    int r = static_cast<int>((py - origin_y) / res);
+
+    if (c >= 0 && c < width && r >= 0 && r < height) {
+      int idx = r * width + c;
+      if (data[idx] > 50) {
+        return true;  // Wall or obstacle blocks straight line of sight
+      }
+    }
+  }
+  return false;
+}
+
 void SimpleExplorer::controlLoop()
 {
   geometry_msgs::msg::Twist cmd;
@@ -642,9 +688,11 @@ void SimpleExplorer::controlLoop()
       last_stall_y_ = curr_y_;
       cmd.linear.x = -0.10;
       cmd.angular.z = 0.0;
-    } else if (rotate_dur >= 1.2 && front >= clear_dist_ && front_left >= 0.25 && front_right >= 0.25) {
-      // Path clear on BOTH LiDAR and ToF (> clear_dist_) with flank clearance! Resume forward exploration
+    } else if (rotate_dur >= 1.0 && front >= clear_dist_ && front_left >= 0.25 && front_right >= 0.25) {
+      // Path clear on BOTH LiDAR and ToF (> clear_dist_) with flank clearance!
+      // Resume exploration with a 1.8s forward commitment to cruise clear of the obstacle
       state_ = ExplorerState::FRONTIER_SEEK;
+      commit_forward_until_ = now + 1.8;
       forward_motion_start_time_ = now;
       last_stall_check_time_ = now;
       last_stall_x_ = curr_x_;
@@ -652,15 +700,21 @@ void SimpleExplorer::controlLoop()
       cmd.linear.x = linear_speed_;
       cmd.angular.z = 0.0;
     } else {
-      // Keep rotating in the latched direction
+      // Keep rotating smoothly in the latched direction
       cmd.linear.x = 0.0;
-      cmd.angular.z = turn_direction_ * 0.45;
+      cmd.angular.z = turn_direction_ * 0.35;
     }
   }
   // =========================================================================
   // 3. CRITICAL / NEAR OBSTACLE DETECTION (Checked during forward motion)
   // =========================================================================
   else if (front < critical_dist_ || front_left < 0.22 || front_right < 0.22) {
+    // If pursuing a frontier that led to an obstacle, blacklist it immediately
+    if (has_target_frontier_) {
+      blacklist_.push_back({target_frontier_.centroid_x, target_frontier_.centroid_y, now});
+      has_target_frontier_ = false;
+    }
+
     if (front < 0.20) {
       // Very close to barrier (<20cm): Reverse first to clear bumper arc before pivoting
       state_ = ExplorerState::REVERSE;
@@ -672,19 +726,24 @@ void SimpleExplorer::controlLoop()
       rotate_start_time_ = now;
       turn_direction_ = optimal_escape_dir;
       cmd.linear.x = 0.0;
-      cmd.angular.z = turn_direction_ * 0.45;
+      cmd.angular.z = turn_direction_ * 0.35;
     }
   }
   // =========================================================================
   // 4. PREDICTIVE OBSTACLE DETECTION (LiDAR or ToF < obstacle_dist_)
   // =========================================================================
   else if (front < obstacle_dist_) {
-    // Forward path obstructed: pivot away cleanly
+    // Forward path obstructed: blacklist obstructed target and pivot away cleanly
+    if (has_target_frontier_) {
+      blacklist_.push_back({target_frontier_.centroid_x, target_frontier_.centroid_y, now});
+      has_target_frontier_ = false;
+    }
+
     state_ = ExplorerState::ROTATE;
     rotate_start_time_ = now;
     turn_direction_ = optimal_escape_dir;
     cmd.linear.x = 0.0;
-    cmd.angular.z = turn_direction_ * 0.45;
+    cmd.angular.z = turn_direction_ * 0.35;
   }
   // =========================================================================
   // 5. FRONTIER SEEKING & COMPLETE ROOM SYSTEMATIC EXPLORATION
@@ -698,6 +757,11 @@ void SimpleExplorer::controlLoop()
         RCLCPP_INFO(this->get_logger(),
                     "=== [ROOM EXPLORATION COMPLETE] 100%% of frontiers mapped with zero stucking ===");
       }
+    } else if (now < commit_forward_until_ && front > critical_dist_) {
+      // Post-avoidance forward commitment: cruise forward through open clearance corridor
+      state_ = ExplorerState::FRONTIER_SEEK;
+      cmd.linear.x = linear_speed_;
+      cmd.angular.z = 0.0;
     } else if (has_target_frontier_) {
       state_ = ExplorerState::FRONTIER_SEEK;
 
@@ -707,15 +771,14 @@ void SimpleExplorer::controlLoop()
       double heading_err = std::atan2(std::sin(goal_angle - curr_yaw_),
                                       std::cos(goal_angle - curr_yaw_));
 
-      if (std::abs(heading_err) > 0.70) {
-        // Heading error > 40°: Crisp in-place pivot with differential torque
+      if (std::abs(heading_err) > 0.90) {
+        // Large heading error > 52°: Crisp in-place pivot with differential torque
         cmd.linear.x = 0.0;
-        cmd.angular.z = (heading_err > 0.0) ? 0.45 : -0.45;
+        cmd.angular.z = (heading_err > 0.0) ? 0.35 : -0.35;
       } else {
-        // Continuous smooth pursuit towards target frontier:
-        // Forward speed scales smoothly with alignment cosine and frontal clearance
-        double heading_cos = std::max(0.3, std::cos(heading_err));
-        double clearance_scale = std::clamp((front - critical_dist_) / (obstacle_dist_ - critical_dist_), 0.5, 1.0);
+        // Continuous smooth curved pursuit towards target frontier:
+        double heading_cos = std::max(0.25, std::cos(heading_err));
+        double clearance_scale = std::clamp((front - critical_dist_) / (obstacle_dist_ - critical_dist_), 0.4, 1.0);
         cmd.linear.x = linear_speed_ * clearance_scale * heading_cos;
 
         // Side repulsive bias if grazing obstacles on left or right flanks:
@@ -727,7 +790,7 @@ void SimpleExplorer::controlLoop()
           side_bias += 0.15 * (0.30 - front_right) / 0.10;
         }
 
-        cmd.angular.z = std::clamp(1.2 * heading_err + side_bias, -0.40, 0.40);
+        cmd.angular.z = std::clamp(1.2 * heading_err + side_bias, -0.35, 0.35);
       }
     } else {
       // No active frontier yet (or initial room discovery): systematic wall following
@@ -749,7 +812,7 @@ void SimpleExplorer::controlLoop()
   // =========================================================================
   // 6. PHYSICAL ANTI-STALL GUARDIAN (Layer 2 Safe)
   // =========================================================================
-  // Strictly monitored during active forward translational cruising
+  // Layer 2A: Forward Translational Cruising Stall
   if ((state_ == ExplorerState::FRONTIER_SEEK || state_ == ExplorerState::WALL_FOLLOW)
       && cmd.linear.x >= 0.05) {
     if ((now - forward_motion_start_time_) >= 2.5) {
@@ -763,7 +826,7 @@ void SimpleExplorer::controlLoop()
         if (dist < 0.025) {
           stall_count_++;
           RCLCPP_WARN(this->get_logger(),
-                      "[Anti-Stall Guardian] Physical obstacle wedged (%.1fcm in 2.5s)! Escaping #%u",
+                      "[Anti-Stall Guardian] Physical forward stall (%.1fcm in 2.5s)! Escaping #%u",
                       dist * 100.0, stall_count_);
           state_ = ExplorerState::REVERSE;
           reverse_start_time_ = now;
@@ -780,11 +843,39 @@ void SimpleExplorer::controlLoop()
       }
     }
   } else if (state_ != ExplorerState::REVERSE) {
-    // When pivoting in place or aligning, reset stall baseline
+    // When pivoting in place or aligning, reset translational stall baseline
     last_stall_check_time_ = now;
     last_stall_x_ = curr_x_;
     last_stall_y_ = curr_y_;
     forward_motion_start_time_ = now;
+  }
+
+  // Layer 2B: Rotational In-Place Pivot Stall
+  if (std::abs(cmd.linear.x) < 0.02 && std::abs(cmd.angular.z) >= 0.20) {
+    if ((now - last_rot_stall_check_time_) >= 2.5) {
+      double d_yaw = std::abs(std::atan2(std::sin(curr_yaw_ - last_rot_stall_yaw_),
+                                         std::cos(curr_yaw_ - last_rot_stall_yaw_)));
+      last_rot_stall_check_time_ = now;
+      last_rot_stall_yaw_ = curr_yaw_;
+
+      if (d_yaw < 0.08) {
+        stall_count_++;
+        RCLCPP_WARN(this->get_logger(),
+                    "[Anti-Stall Guardian] Rotational pivot stalled (%.1f° in 2.5s)! Executing escape reverse #%u",
+                    d_yaw * (180.0 / M_PI), stall_count_);
+        state_ = ExplorerState::REVERSE;
+        reverse_start_time_ = now;
+        cmd.linear.x = -0.10;
+        cmd.angular.z = 0.0;
+        if (has_target_frontier_) {
+          blacklist_.push_back({target_frontier_.centroid_x, target_frontier_.centroid_y, now});
+          has_target_frontier_ = false;
+        }
+      }
+    }
+  } else {
+    last_rot_stall_check_time_ = now;
+    last_rot_stall_yaw_ = curr_yaw_;
   }
 
   log_count_++;

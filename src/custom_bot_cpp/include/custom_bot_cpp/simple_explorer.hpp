@@ -92,6 +92,7 @@ private:
   double sectorMin(const std::vector<float> & ranges, float angle_min, float angle_inc,
                    double deg_start, double deg_end);
   double findBestClearanceAngle(const std::vector<float> & ranges, float angle_min, float angle_inc);
+  bool isPathObstructed(double x0, double y0, double x1, double y1) const;
 
   // Configuration Parameters
   double linear_speed_{0.12};
@@ -140,6 +141,11 @@ private:
   double last_stall_x_{0.0};
   double last_stall_y_{0.0};
   uint32_t stall_count_{0};
+
+  // Post-avoidance forward commitment & Rotational stall monitoring
+  double commit_forward_until_{0.0};
+  double last_rot_stall_check_time_{0.0};
+  double last_rot_stall_yaw_{0.0};
 
   // ToF Range Cache & Moving Median Filter
   double tof_range_{2.00};

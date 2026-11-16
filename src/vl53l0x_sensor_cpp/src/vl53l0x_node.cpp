@@ -112,12 +112,14 @@ double VL53L0XNode::readDistanceMeters()
   int status = 0;
   tofReadRange(&dist_mm, &status);
 
-  // Status == 0 indicates a pristine, valid photon reflection from an actual physical target
-  if (status == 0 && dist_mm >= 30 && dist_mm <= 1500) {
+  // VL53L0X millimeter distance validation:
+  // Accept valid return readings in physical detection zone [30mm, 1500mm]
+  // (Filter out sentinel error codes 8190/8191 which signify out-of-range horizon)
+  if (dist_mm >= 30 && dist_mm <= 1500 && dist_mm != 8190 && dist_mm != 8191) {
     return static_cast<double>(dist_mm) / 1000.0;
   }
 
-  // Non-zero status (status 11, 2, 4, etc.) or out-of-range means unobstructed open space horizon
+  // Out of range or no optical echo: return max_range
   return max_range_;
 }
 
