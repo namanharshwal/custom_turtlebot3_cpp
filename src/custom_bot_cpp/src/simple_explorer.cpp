@@ -635,14 +635,30 @@ void SimpleExplorer::controlLoop()
   double left        = sectorMin(ranges, a_min, a_inc,  45.0, 105.0);
   double right       = sectorMin(ranges, a_min, a_inc, -105.0, -45.0);
 
-  // Intelligent Multi-Sensor Obstacle Clearance Fusion (ToF + 2D LiDAR):
-  // 1. VL53L0X ToF provides ground-level near-field obstacle detection (blindspot below LiDAR plane)
-  // 2. 2D LiDAR provides 360° panoramic spatial mapping and escape route planning
+  // ── Intelligent Multi-Sensor Obstacle Clearance Fusion (ToF + 2D LiDAR) ─────
+  // 1. VL53L0X ToF (z = 3.5cm) detects low-profile obstacles below 2D LiDAR plane (z = 12cm).
+  // 2. VL53L0X conical beam (25° FoV) causes ground-grazing returns at ~0.16m-0.23m.
+  // 3. Multi-Sensor Cross-Validation Rules:
+  //    Rule A: Critical bumper proximity (ToF < 0.15m) -> True near-bumper obstacle!
+  //    Rule B: Mid-range low obstacle (0.24m <= ToF <= 0.80m) -> True obstacle outside ground horizon!
+  //    Rule C: Ambiguous band (0.15m <= ToF <= 0.23m) -> Confirmed if LiDAR also detects obstacle within 0.45m!
   bool tof_fresh = ((now - tof_time_) < 0.6);
-  bool tof_valid = (tof_fresh && tof_range_ >= 0.03 && tof_range_ <= 1.20);
+  bool tof_is_real_obstacle = false;
 
-  // Unified frontal clearance: true minimum of LiDAR forward corridor and low-profile ToF sensor
-  double front = tof_valid ? std::min(lidar_front, tof_range_) : lidar_front;
+  if (tof_fresh && tof_range_ >= 0.04 && tof_range_ <= 1.20) {
+    if (tof_range_ < 0.15) {
+      tof_is_real_obstacle = true;
+    } else if (tof_range_ > 0.23 && tof_range_ <= 0.80) {
+      tof_is_real_obstacle = true;
+    } else if (tof_range_ >= 0.15 && tof_range_ <= 0.23) {
+      if (lidar_front < 0.45) {
+        tof_is_real_obstacle = true;
+      }
+    }
+  }
+
+  // Unified frontal clearance:
+  double front = tof_is_real_obstacle ? std::min(lidar_front, tof_range_) : lidar_front;
 
   // Spatial clearance analysis from 360° LiDAR field to determine optimal escape direction
   double clearance_left  = 0.55 * front_left + 0.45 * left;
@@ -670,7 +686,7 @@ void SimpleExplorer::controlLoop()
       forward_motion_start_time_ = now;
       turn_direction_ = optimal_escape_dir;
       cmd.linear.x = 0.0;
-      cmd.angular.z = turn_direction_ * 0.45;
+      cmd.angular.z = turn_direction_ * 0.35;
     }
   }
   // =========================================================================
