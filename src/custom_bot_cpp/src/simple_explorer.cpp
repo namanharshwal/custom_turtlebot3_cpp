@@ -344,9 +344,10 @@ void SimpleExplorer::findFrontiers()
       // Cost function: J = Distance - 0.03 * min(Size, 40)
       cl.score = cl.distance - 0.03 * std::min(cl.size, static_cast<size_t>(40));
 
-      // When selecting an initial new target, penalize clusters blocked by an obstacle in line of sight
-      if (!has_target_frontier_ && isPathObstructed(curr_x_, curr_y_, cl.centroid_x, cl.centroid_y)) {
-        cl.score += 5.0;
+      // Heavily penalize clusters blocked by a wall in direct line of sight (+100.0)
+      // This strictly confines exploration to the current room boundaries!
+      if (isPathObstructed(curr_x_, curr_y_, cl.centroid_x, cl.centroid_y)) {
+        cl.score += 100.0;
       }
 
       if (cl.score < best_score) {
@@ -356,7 +357,16 @@ void SimpleExplorer::findFrontiers()
     }
 
     if (has_target_frontier_ && active_match_idx >= 0) {
-      // Current target is still valid in the map!
+      // If current active target has become blocked by an intervening wall, release it
+      if (isPathObstructed(curr_x_, curr_y_, frontier_clusters_[active_match_idx].centroid_x,
+                                             frontier_clusters_[active_match_idx].centroid_y)) {
+        has_target_frontier_ = false;
+        active_match_idx = -1;
+      }
+    }
+
+    if (has_target_frontier_ && active_match_idx >= 0) {
+      // Current target is still valid in the map and has clear line of sight!
       // High persistence prevents target flipping/chattering:
       // Only switch away if the robot has pursued current target for at least 3.0s
       // and another cluster is substantially closer (> 1.20m closer in physical distance)
@@ -634,11 +644,14 @@ void SimpleExplorer::controlLoop()
   float a_min = scan_->angle_min;
   float a_inc = scan_->angle_increment;
 
-  double lidar_front = sectorMin(ranges, a_min, a_inc, -18.0,  18.0);
-  double front_left  = sectorMin(ranges, a_min, a_inc,  18.0,  45.0);
-  double front_right = sectorMin(ranges, a_min, a_inc, -45.0, -18.0);
-  double left        = sectorMin(ranges, a_min, a_inc,  45.0, 105.0);
-  double right       = sectorMin(ranges, a_min, a_inc, -105.0, -45.0);
+  double lidar_center = sectorMin(ranges, a_min, a_inc, -18.0,  18.0);
+  double front_left   = sectorMin(ranges, a_min, a_inc,  18.0,  45.0);
+  double front_right  = sectorMin(ranges, a_min, a_inc, -45.0, -18.0);
+  double left         = sectorMin(ranges, a_min, a_inc,  45.0, 105.0);
+  double right        = sectorMin(ranges, a_min, a_inc, -105.0, -45.0);
+
+  // Full frontal collision clearance encompassing center, front-left, and front-right sweeps:
+  double lidar_front = std::min({lidar_center, front_left, front_right});
 
   // ── Intelligent Multi-Sensor Obstacle Clearance Fusion (ToF + 2D LiDAR) ─────
   // 1. 2D LiDAR (z = 12cm) is the primary room geometry and corridor clearance authority.
@@ -691,7 +704,7 @@ void SimpleExplorer::controlLoop()
       forward_motion_start_time_ = now;
       turn_direction_ = optimal_escape_dir;
       cmd.linear.x = 0.0;
-      cmd.angular.z = turn_direction_ * 0.35;
+      cmd.angular.z = turn_direction_ * angular_speed_;
     }
   }
   // =========================================================================
@@ -729,9 +742,9 @@ void SimpleExplorer::controlLoop()
   // =========================================================================
   // 3. CRITICAL / NEAR OBSTACLE DETECTION (Checked during forward motion)
   // =========================================================================
-  else if (front < critical_dist_ || front_left < 0.22 || front_right < 0.22) {
-    if (front < 0.20) {
-      // Very close to barrier (<20cm): Reverse first to clear bumper arc before pivoting
+  else if (front < critical_dist_ || front_left < 0.26 || front_right < 0.26) {
+    if (front < 0.24 || front_left < 0.24 || front_right < 0.24) {
+      // Very close to barrier (<24cm): Reverse first to clear bumper arc before pivoting
       state_ = ExplorerState::REVERSE;
       reverse_start_time_ = now;
       cmd.linear.x = -0.10;
@@ -832,12 +845,14 @@ void SimpleExplorer::controlLoop()
         last_stall_x_ = curr_x_;
         last_stall_y_ = curr_y_;
 
-        // At 0.12 m/s, robot should cover ~0.30m in 2.5s. If < 0.025m, robot is physically wedged/stalled!
-        if (dist < 0.025) {
+        // At 0.12 m/s, robot should cover ~0.30m in 2.5s. If < 0.025m or near a wall (<0.30m):
+        // prevent wheel-slip against walls from distorting SLAM odometry!
+        bool wall_contact = (front < 0.30 || front_left < 0.26 || front_right < 0.26);
+        if (dist < 0.025 || wall_contact) {
           stall_count_++;
           RCLCPP_WARN(this->get_logger(),
-                      "[Anti-Stall Guardian] Physical forward stall (%.1fcm in 2.5s)! Escaping #%u",
-                      dist * 100.0, stall_count_);
+                      "[Anti-Stall Guardian] Wall barrier contact / stall (dist=%.1fcm, front=%.2fm)! Escaping #%u",
+                      dist * 100.0, front, stall_count_);
           state_ = ExplorerState::REVERSE;
           reverse_start_time_ = now;
           turn_direction_ = (left > right) ? 1.0 : -1.0;
