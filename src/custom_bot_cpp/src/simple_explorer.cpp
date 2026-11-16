@@ -113,7 +113,7 @@ SimpleExplorer::SimpleExplorer(const rclcpp::NodeOptions & options)
 void SimpleExplorer::declareParameters()
 {
   this->declare_parameter<double>("linear_speed", 0.12);
-  this->declare_parameter<double>("angular_speed", 0.35);
+  this->declare_parameter<double>("angular_speed", 0.40);
   this->declare_parameter<double>("obstacle_dist", 0.40);
   this->declare_parameter<double>("critical_dist", 0.25);
   this->declare_parameter<double>("clear_dist", 0.48);
@@ -344,9 +344,9 @@ void SimpleExplorer::findFrontiers()
       // Cost function: J = Distance - 0.03 * min(Size, 40)
       cl.score = cl.distance - 0.03 * std::min(cl.size, static_cast<size_t>(40));
 
-      // Heavily penalize clusters blocked by an obstacle in direct line of sight
-      if (isPathObstructed(curr_x_, curr_y_, cl.centroid_x, cl.centroid_y)) {
-        cl.score += 8.0;
+      // When selecting an initial new target, penalize clusters blocked by an obstacle in line of sight
+      if (!has_target_frontier_ && isPathObstructed(curr_x_, curr_y_, cl.centroid_x, cl.centroid_y)) {
+        cl.score += 5.0;
       }
 
       if (cl.score < best_score) {
@@ -356,16 +356,21 @@ void SimpleExplorer::findFrontiers()
     }
 
     if (has_target_frontier_ && active_match_idx >= 0) {
-      // Current target is still valid!
-      // Hysteresis: only switch away if another target is substantially closer (> 0.60m better score)
-      if (best_idx >= 0 && best_idx != active_match_idx &&
-          (frontier_clusters_[active_match_idx].score - best_score) > 0.60) {
+      // Current target is still valid in the map!
+      // High persistence prevents target flipping/chattering:
+      // Only switch away if the robot has pursued current target for at least 3.0s
+      // and another cluster is substantially closer (> 1.20m closer in physical distance)
+      bool can_switch = ((now - target_lock_time_) > 3.0);
+      double active_dist = frontier_clusters_[active_match_idx].distance;
+      if (can_switch && best_idx >= 0 && best_idx != active_match_idx &&
+          (active_dist - frontier_clusters_[best_idx].distance) > 1.20) {
         target_frontier_ = frontier_clusters_[best_idx];
         target_lock_time_ = now;
         last_target_dist_ = target_frontier_.distance;
         RCLCPP_INFO(this->get_logger(),
-                    "[Frontier] Switched target to closer cluster at (%.2f, %.2f) score=%.2f",
-                    target_frontier_.centroid_x, target_frontier_.centroid_y, best_score);
+                    "[Frontier] Switched target to closer cluster at (%.2f, %.2f) (%.2fm vs %.2fm)",
+                    target_frontier_.centroid_x, target_frontier_.centroid_y,
+                    frontier_clusters_[best_idx].distance, active_dist);
       } else {
         // Refine current target centroid smoothly, but keep target_lock_time_ intact
         target_frontier_.centroid_x = frontier_clusters_[active_match_idx].centroid_x;
@@ -718,7 +723,7 @@ void SimpleExplorer::controlLoop()
     } else {
       // Keep rotating smoothly in the latched direction
       cmd.linear.x = 0.0;
-      cmd.angular.z = turn_direction_ * 0.35;
+      cmd.angular.z = turn_direction_ * angular_speed_;
     }
   }
   // =========================================================================
@@ -742,7 +747,7 @@ void SimpleExplorer::controlLoop()
       rotate_start_time_ = now;
       turn_direction_ = optimal_escape_dir;
       cmd.linear.x = 0.0;
-      cmd.angular.z = turn_direction_ * 0.35;
+      cmd.angular.z = turn_direction_ * angular_speed_;
     }
   }
   // =========================================================================
@@ -759,7 +764,7 @@ void SimpleExplorer::controlLoop()
     rotate_start_time_ = now;
     turn_direction_ = optimal_escape_dir;
     cmd.linear.x = 0.0;
-    cmd.angular.z = turn_direction_ * 0.35;
+    cmd.angular.z = turn_direction_ * angular_speed_;
   }
   // =========================================================================
   // 5. FRONTIER SEEKING & COMPLETE ROOM SYSTEMATIC EXPLORATION
@@ -790,7 +795,7 @@ void SimpleExplorer::controlLoop()
       if (std::abs(heading_err) > 0.90) {
         // Large heading error > 52°: Crisp in-place pivot with differential torque
         cmd.linear.x = 0.0;
-        cmd.angular.z = (heading_err > 0.0) ? 0.35 : -0.35;
+        cmd.angular.z = (heading_err > 0.0) ? angular_speed_ : -angular_speed_;
       } else {
         // Continuous smooth curved pursuit towards target frontier:
         double heading_cos = std::max(0.25, std::cos(heading_err));
@@ -806,7 +811,7 @@ void SimpleExplorer::controlLoop()
           side_bias += 0.15 * (0.30 - front_right) / 0.10;
         }
 
-        cmd.angular.z = std::clamp(1.2 * heading_err + side_bias, -0.35, 0.35);
+        cmd.angular.z = std::clamp(1.2 * heading_err + side_bias, -angular_speed_, angular_speed_);
       }
     } else {
       // No active frontier yet (or initial room discovery): systematic wall following

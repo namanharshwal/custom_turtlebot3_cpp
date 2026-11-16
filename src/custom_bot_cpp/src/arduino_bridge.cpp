@@ -306,11 +306,11 @@ void ArduinoBridge::cmdVelCallback(const geometry_msgs::msg::Twist::SharedPtr ms
 
     // CASE 1: Pure In-Place Rotation (Zero linear speed)
     if (std::abs(lin) < DEADBAND) {
-      int rot_base = 90;
+      int rot_base = 100;
       if (stall_level_ >= 2) {
         rot_base = 118;  // High breakaway torque if persistently stalled on carpet
       } else if (in_kick || stall_level_ >= 1) {
-        rot_base = 104;  // Calibrated breakaway torque on carpet
+        rot_base = 108;  // Calibrated breakaway torque on carpet
       }
 
       if (ang > 0.0) {

@@ -320,6 +320,8 @@ void ObjectDetectorNode::captureLoop()
   auto t_start = std::chrono::steady_clock::now();
 
   while (running_ && rclcpp::ok()) {
+    auto loop_start = std::chrono::steady_clock::now();
+
     if (!cap.read(frame) || frame.empty()) {
       std::this_thread::sleep_for(std::chrono::milliseconds(50));
       continue;
@@ -340,6 +342,15 @@ void ObjectDetectorNode::captureLoop()
       actual_cam_fps_ = frame_count / elapsed;
       frame_count = 0;
       t_start = t_now;
+    }
+
+    // Pace camera capture and Bayer unpacking to publish_rate_hz_ (default 10 Hz)
+    // to preserve CPU headroom for real-time SLAM scan matching
+    int target_period_ms = static_cast<int>(1000.0 / std::max(1.0, publish_rate_hz_));
+    auto loop_end = std::chrono::steady_clock::now();
+    auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(loop_end - loop_start).count();
+    if (elapsed_ms < target_period_ms) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(target_period_ms - elapsed_ms));
     }
   }
 

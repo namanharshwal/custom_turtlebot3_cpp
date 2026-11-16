@@ -156,7 +156,7 @@ int main(int argc, char ** argv)
     "ros2", "run", "custom_bot_cpp", "simple_explorer",
     "--ros-args",
     "-p", "linear_speed:=0.12",
-    "-p", "angular_speed:=0.35",
+    "-p", "angular_speed:=0.40",
     "-p", "obstacle_dist:=0.40",
     "-p", "critical_dist:=0.25",
     "-p", "clear_dist:=0.48",
