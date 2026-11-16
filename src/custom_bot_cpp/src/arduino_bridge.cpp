@@ -491,43 +491,17 @@ void ArduinoBridge::updateOdometry(long raw_right_ticks, long raw_left_ticks,
   left_ticks_  = left_ticks;
   right_ticks_ = right_ticks;
 
-  // ── BNO055 Absolute Heading Extraction & REP 103 Inversion ────────
-  // Extract planar yaw from the orientation quaternion:
-  // yaw_raw = atan2(2*(qw*qz + qx*qy), 1 - 2*(qy^2 + qz^2))
-  double bno_yaw = std::atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz));
-
-  // Initialize reference frame at power-on
-  if (!has_initial_yaw_) {
-    initial_yaw_ = bno_yaw;
-    theta_ = 0.0;
-    theta_prev_raw_ = bno_yaw;
+  if (!has_initial_ticks_) {
     prev_left_ticks_  = left_ticks;
     prev_right_ticks_ = right_ticks;
-    has_initial_yaw_ = true;
+    has_initial_ticks_ = true;
     last_stall_check_ = now.seconds();
     last_check_left_ticks_ = left_ticks;
     last_check_right_ticks_ = right_ticks;
     return;
   }
 
-  // Compute differential yaw rotation between consecutive 20Hz samples
-  double raw_d_theta = bno_yaw - theta_prev_raw_;
-
-  // Normalize angular difference to standard interval [-π, +π]
-  while (raw_d_theta > M_PI)  raw_d_theta -= 2.0 * M_PI;
-  while (raw_d_theta < -M_PI) raw_d_theta += 2.0 * M_PI;
-
-  // ── Crucial ROS REP 103 Sign Inversion ────────────────────────────
-  // BNO055 outputs aerospace NED frame (clockwise positive, +Z down).
-  // ROS REP 103 standard strictly requires counter-clockwise positive (+Z up).
-  // Mathematical Inversion: d_theta = -raw_d_theta
-  theta_prev_raw_ = bno_yaw;
-  double d_theta = -raw_d_theta;
-
-  // Accumulate continuous absolute yaw heading (drift-free, smooth, no wrap jumps)
-  theta_ += d_theta;
-
-  // ── Encoder Linear Displacement Integration ───────────────────────
+  // ── Encoder Linear & Angular Displacement Integration ──────────────
   long d_left_raw  = left_ticks  - prev_left_ticks_;
   long d_right_raw = right_ticks - prev_right_ticks_;
   prev_left_ticks_  = left_ticks;
@@ -542,9 +516,37 @@ void ArduinoBridge::updateOdometry(long raw_right_ticks, long raw_left_ticks,
   // Linear displacement of chassis center: delta_s = (d_right + d_left) / 2.0
   double d_center = (d_left_m + d_right_m) / 2.0;
 
-  // Second-order dead-reckoning integration in world frame
-  x_ += d_center * std::cos(theta_);
-  y_ += d_center * std::sin(theta_);
+  // Differential drive wheel odometry angular rotation (REP 103 counter-clockwise positive)
+  double d_theta_enc = (d_right_m - d_left_m) / wheel_separation_;
+
+  // ── IMU Heading Extraction & Validation ─────────────────────────────
+  // Valid quaternion check: norm squared must be close to 1.0
+  double q_norm_sq = qw * qw + qx * qx + qy * qy + qz * qz;
+  bool imu_valid = (q_norm_sq >= 0.5 && q_norm_sq <= 1.5 &&
+                    !(qw == 1.0 && qx == 0.0 && qy == 0.0 && qz == 0.0 && ax == 0.0 && ay == 0.0));
+
+  double d_theta = d_theta_enc;  // Default and infallible baseline: Wheel Odometry!
+
+  if (imu_valid) {
+    double bno_yaw = std::atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz));
+    if (!has_initial_yaw_) {
+      initial_yaw_ = bno_yaw;
+      theta_prev_raw_ = bno_yaw;
+      has_initial_yaw_ = true;
+    } else {
+      double raw_d_theta = bno_yaw - theta_prev_raw_;
+      while (raw_d_theta > M_PI)  raw_d_theta -= 2.0 * M_PI;
+      while (raw_d_theta < -M_PI) raw_d_theta += 2.0 * M_PI;
+      theta_prev_raw_ = bno_yaw;
+      d_theta = -raw_d_theta;  // ROS REP 103 CCW inversion
+    }
+  }
+
+  // ── 2nd Order Runge-Kutta Midpoint Integration ───────────────────────
+  double mid_theta = theta_ + (d_theta / 2.0);
+  x_ += d_center * std::cos(mid_theta);
+  y_ += d_center * std::sin(mid_theta);
+  theta_ += d_theta;
 
   // Compute planar quaternion output: qz = sin(theta / 2), qw = cos(theta / 2)
   double qz_out = std::sin(theta_ / 2.0);
@@ -556,7 +558,7 @@ void ArduinoBridge::updateOdometry(long raw_right_ticks, long raw_left_ticks,
 
   // Sampling period dt = 50ms (matches Arduino 20 Hz SEND_INTERVAL)
   double dt = 0.05;
-  double gz_corr = -gz;  // Correct gyro z-axis to match REP 103 CCW positive convention
+  double gz_corr = imu_valid ? -gz : (d_theta / dt);
 
   // ── 1. Publish nav_msgs/Odometry Message ─────────────────────────────
   nav_msgs::msg::Odometry odom;
@@ -634,8 +636,9 @@ void ArduinoBridge::updateOdometry(long raw_right_ticks, long raw_left_ticks,
   debug_msg_count_++;
   if (debug_msg_count_ % 20 == 0) {
     RCLCPP_INFO(this->get_logger(),
-                "Odom: x=%.2fm y=%.2fm th=%.1f° | PWM: L=%d R=%d",
-                x_, y_, theta_ * (180.0 / M_PI), last_l_pwm_, last_r_pwm_);
+                "Odom: x=%.2fm y=%.2fm th=%.1f° (mode=%s) | PWM: L=%d R=%d",
+                x_, y_, theta_ * (180.0 / M_PI), imu_valid ? "IMU_FUSED" : "ENCODER_KINEMATICS",
+                last_l_pwm_, last_r_pwm_);
   }
 
   // ── 4. Publish sensor_msgs/JointState Message ────────────────────────

@@ -125,6 +125,7 @@ private:
   double initial_yaw_{0.0};
   double theta_prev_raw_{0.0};
   bool has_initial_yaw_{false};
+  bool has_initial_ticks_{false};
 
   long left_ticks_{0};
   long right_ticks_{0};
