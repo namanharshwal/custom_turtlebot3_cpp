@@ -306,11 +306,12 @@ void ArduinoBridge::cmdVelCallback(const geometry_msgs::msg::Twist::SharedPtr ms
 
     // CASE 1: Pure In-Place Rotation (Zero linear speed)
     if (std::abs(lin) < DEADBAND) {
-      int rot_base = 100;
+      int rot_base = static_cast<int>(std::round(82.0 + std::abs(ang) * 35.0));
+      rot_base = std::clamp(rot_base, 85, 102);
       if (stall_level_ >= 2) {
-        rot_base = 118;  // High breakaway torque if persistently stalled on carpet
+        rot_base = 115;  // High breakaway torque if persistently stalled on carpet
       } else if (in_kick || stall_level_ >= 1) {
-        rot_base = 108;  // Calibrated breakaway torque on carpet
+        rot_base = 104;  // Calibrated breakaway torque on carpet
       }
 
       if (ang > 0.0) {
@@ -325,47 +326,43 @@ void ArduinoBridge::cmdVelCallback(const geometry_msgs::msg::Twist::SharedPtr ms
     }
     // CASE 2: Reversing Motion (lin < 0)
     else if (lin < 0.0) {
-      int rev_l = 85;
-      int rev_r = 90;
-      if (in_kick && stall_level_ >= 2) {
-        rev_l = 105;
-        rev_r = 110;  // Stall boost during reverse
+      int rev_l = 100;
+      int rev_r = 105;
+      if (in_kick || stall_level_ >= 1) {
+        rev_l = 112;
+        rev_r = 118;  // High breakaway torque on carpet during reverse escape
       }
       l_pwm = -rev_l;
       r_pwm = -rev_r;
     }
     // CASE 3: Forward Motion (Straight Crawl or Curve Avoidance)
     else {
+      // Differential steering offset proportional to target angular velocity
+      // Steering Right (ang < 0): speed up left, slow down right
+      // Steering Left (ang > 0): slow down left, speed up right
+      int steer = static_cast<int>(std::round(ang * 40.0));
+
       if (in_kick) {
         if (stall_level_ >= 2) {
-          // Full breakaway boost
-          l_pwm = 110;
-          r_pwm = 115;
+          // Full breakaway boost with differential steer offset
+          l_pwm = std::clamp(108 - steer, 80, 125);
+          r_pwm = std::clamp(114 + steer, 80, 125);
         } else {
           // Normal start kick: overcomes caster stiction
-          l_pwm = 98;
-          r_pwm = 104;
+          l_pwm = std::clamp(96 - steer, 75, 115);
+          r_pwm = std::clamp(102 + steer, 75, 120);
         }
       } else {
         // Calibrated forward crawl PWM on carpet: Left=92, Right=98
         int base_l = 92;
         int base_r = 98;
 
-        // Differential steering offset proportional to target angular velocity
-        int steer = static_cast<int>(std::round(ang * 25.0));
-        if (steer < 0) {
-          // Steering Right: Increase left wheel speed to push chassis right
-          l_pwm = base_l + std::abs(steer);
-          r_pwm = base_r;
-        } else {
-          // Steering Left: Increase right wheel speed to push chassis left
-          l_pwm = base_l;
-          r_pwm = base_r + std::abs(steer);
-        }
+        l_pwm = base_l - steer;
+        r_pwm = base_r + steer;
 
         // Clamp PWM commands within safe rolling limits
-        l_pwm = std::max(85, std::min(115, l_pwm));
-        r_pwm = std::max(90, std::min(120, r_pwm));
+        l_pwm = std::max(75, std::min(115, l_pwm));
+        r_pwm = std::max(75, std::min(120, r_pwm));
       }
     }
   }
@@ -508,6 +505,14 @@ void ArduinoBridge::updateOdometry(long raw_right_ticks, long raw_left_ticks,
   long d_right_raw = right_ticks - prev_right_ticks_;
   prev_left_ticks_  = left_ticks;
   prev_right_ticks_ = right_ticks;
+
+  // Physical glitch filter: 150 ticks in 50ms corresponds to > 1.5 m/s, which is physically impossible
+  if (std::abs(d_left_raw) > 150 || std::abs(d_right_raw) > 150) {
+    RCLCPP_WARN(this->get_logger(),
+                "[Odometry Guard] Discarded glitch tick jump (dL=%ld, dR=%ld)",
+                d_left_raw, d_right_raw);
+    return;
+  }
 
   // Apply asymmetric distance-per-tick calibrations:
   // Left Wheel:  δ_L = 0.00049564 m/tick (412 ticks/rev)

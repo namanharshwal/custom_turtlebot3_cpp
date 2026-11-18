@@ -94,6 +94,7 @@ SimpleExplorer::SimpleExplorer(const rclcpp::NodeOptions & options)
   tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
 
   double now = this->now().seconds();
+  exploration_start_time_ = now;
   last_stall_check_time_ = now;
   forward_motion_start_time_ = now;
   last_frontier_search_time_ = now;
@@ -156,6 +157,28 @@ void SimpleExplorer::updateRobotPose()
       double qw = tf.transform.rotation.w;
       curr_yaw_ = std::atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz));
       has_pose_ = true;
+
+      // Latch the exact initial starting pose in the map frame
+      if (!has_initial_pose_) {
+        initial_x_ = curr_x_;
+        initial_y_ = curr_y_;
+        initial_yaw_ = curr_yaw_;
+        has_initial_pose_ = true;
+        prev_pose_x_ = curr_x_;
+        prev_pose_y_ = curr_y_;
+        first_pose_ = false;
+        breadcrumbs_.push_back({initial_x_, initial_y_});
+        RCLCPP_INFO(this->get_logger(),
+                    "=== [SimpleExplorer] Recorded Initial Starting Pose: x=%.2f, y=%.2f, yaw=%.2f rad (%.1f deg) ===",
+                    initial_x_, initial_y_, initial_yaw_, initial_yaw_ * 180.0 / M_PI);
+      } else {
+        double step = std::hypot(curr_x_ - prev_pose_x_, curr_y_ - prev_pose_y_);
+        if (step > 0.01 && step < 0.5) {
+          total_distance_traveled_ += step;
+          prev_pose_x_ = curr_x_;
+          prev_pose_y_ = curr_y_;
+        }
+      }
       return;
     }
   } catch (...) {
@@ -201,7 +224,7 @@ void SimpleExplorer::mapCallback(const nav_msgs::msg::OccupancyGrid::SharedPtr m
 
 void SimpleExplorer::findFrontiers()
 {
-  if (!has_map_ || !map_ || !has_pose_) {
+  if (!has_map_ || !map_ || !has_pose_ || all_frontiers_explored_) {
     return;
   }
 
@@ -299,11 +322,23 @@ void SimpleExplorer::findFrontiers()
       [](const FrontierCluster & cl) { return cl.size < 3; }),
     frontier_clusters_.end());
 
+  // Mapping can only be complete after active room exploration (at least 90s AND > 5.0m traveled, or 0 frontiers)
+  bool can_finish_mapping = (total_distance_traveled_ >= 5.0 && (now - exploration_start_time_) >= 90.0) ||
+                            (candidate_points.empty() && (now - exploration_start_time_) >= 60.0);
+
   // 5. Select Optimal Frontier Target with Hysteresis & Commitment
   if (frontier_clusters_.empty()) {
-    if (candidate_points.empty() && scan_count_ > 50) {
-      all_frontiers_explored_ = true;
-      has_target_frontier_ = false;
+    has_target_frontier_ = false;
+    if (can_finish_mapping && candidate_points.empty()) {
+      no_frontiers_count_++;
+      if (no_frontiers_count_ >= 30) {  // 3.0 seconds sustained with 0 frontiers
+        all_frontiers_explored_ = true;
+        RCLCPP_INFO(this->get_logger(),
+                    "=== [MAP COVERAGE COMPLETE] Traveled %.2fm in %.1fs. Returning to start position! ===",
+                    total_distance_traveled_, now - exploration_start_time_);
+        publishMarkers();
+        return;
+      }
     }
   } else {
     all_frontiers_explored_ = false;
@@ -344,10 +379,10 @@ void SimpleExplorer::findFrontiers()
       // Cost function: J = Distance - 0.03 * min(Size, 40)
       cl.score = cl.distance - 0.03 * std::min(cl.size, static_cast<size_t>(40));
 
-      // Heavily penalize clusters blocked by a wall in direct line of sight (+100.0)
-      // This strictly confines exploration to the current room boundaries!
+      // Strictly reject clusters blocked by a wall in direct line of sight:
+      // Exploration must be strictly confined to reachable space within the room boundaries!
       if (isPathObstructed(curr_x_, curr_y_, cl.centroid_x, cl.centroid_y)) {
-        cl.score += 100.0;
+        continue;
       }
 
       if (cl.score < best_score) {
@@ -400,6 +435,20 @@ void SimpleExplorer::findFrontiers()
                   target_frontier_.distance, best_score, frontier_clusters_.size());
     } else {
       has_target_frontier_ = false;
+      // If there are no reachable clusters found, check if mapping coverage is complete
+      if (can_finish_mapping) {
+        no_frontiers_count_++;
+        if (no_frontiers_count_ >= 50) {  // 5.0 seconds sustained of no reachable frontiers
+          all_frontiers_explored_ = true;
+          RCLCPP_INFO(this->get_logger(),
+                      "=== [MAP COVERAGE COMPLETE] Traveled %.2fm in %.1fs. Returning to start position! ===",
+                      total_distance_traveled_, now - exploration_start_time_);
+          publishMarkers();
+          return;
+        }
+      } else {
+        no_frontiers_count_ = 0;
+      }
     }
   }
 
@@ -593,6 +642,18 @@ void SimpleExplorer::controlLoop()
 
   updateRobotPose();
 
+  // Record breadcrumbs during exploration for return-to-start backtracking
+  if (has_initial_pose_ && !all_frontiers_explored_) {
+    if (breadcrumbs_.empty()) {
+      breadcrumbs_.push_back({initial_x_, initial_y_});
+    } else {
+      double d_last = std::hypot(curr_x_ - breadcrumbs_.back().first, curr_y_ - breadcrumbs_.back().second);
+      if (d_last >= 0.25) {
+        breadcrumbs_.push_back({curr_x_, curr_y_});
+      }
+    }
+  }
+
   // Periodic frontier re-evaluation if map has updated (every 1.5s)
   if ((now - last_frontier_search_time_) >= 1.5) {
     last_frontier_search_time_ = now;
@@ -654,23 +715,25 @@ void SimpleExplorer::controlLoop()
   double lidar_front = std::min({lidar_center, front_left, front_right});
 
   // ── Intelligent Multi-Sensor Obstacle Clearance Fusion (ToF + 2D LiDAR) ─────
-  // 1. 2D LiDAR (z = 12cm) is the primary room geometry and corridor clearance authority.
-  // 2. VL53L0X ToF (z = 3.5cm) guards low-profile bumper blindspots below the LiDAR plane.
-  // 3. ToF ranging is strictly bounded and limited as per LiDAR:
-  //    - Rule A: Critical near-bumper obstacle (< 0.15m) -> Emergency avoidance.
-  //    - Rule B: Corroborated low obstacle (< 0.40m) -> Only active when approaching obstacles/walls
-  //              as confirmed by LiDAR (lidar_front < 0.60m).
-  //    - Rule C: Open corridor protection (lidar_front >= 0.60m) -> Any ToF reading > 0.15m is optical
-  //              carpet-grazing return and is filtered out so it never falsely halts the robot!
+  // 1. 2D LiDAR (z = 12cm) is the authoritative room geometry and corridor clearance authority.
+  // 2. VL53L0X ToF (z = 3.5cm) guards low bumper blindspots below the LiDAR plane.
+  // 3. ToF ranging is strictly limited and bounded as per LiDAR:
+  //    - Rule A: Open Corridor Protection (lidar_front >= 0.45m):
+  //              When LiDAR confirms open corridor ahead, ToF readings (> 0.08m) are optical
+  //              carpet-grazing reflections (beam hits carpet at 12-16cm) and MUST be filtered out!
+  //    - Rule B: Critical Bumper Contact (ToF < 0.08m):
+  //              Direct physical bumper hazard right in front of the robot chassis.
+  //    - Rule C: Corroborated Low Barrier (lidar_front < 0.45m && ToF < obstacle_dist_):
+  //              Approaching barrier confirmed by both LiDAR and ToF.
   bool tof_fresh = ((now - tof_time_) < 0.6);
   bool tof_is_real_obstacle = false;
 
-  if (tof_fresh && tof_range_ >= 0.04 && tof_range_ <= 0.60) {
-    if (tof_range_ < 0.15) {
-      // Direct bumper proximity danger: low object immediately ahead
+  if (tof_fresh && tof_range_ >= 0.03 && tof_range_ <= 0.50) {
+    if (tof_range_ < 0.08) {
+      // Direct physical contact danger at bumper edge
       tof_is_real_obstacle = true;
-    } else if (tof_range_ < obstacle_dist_ && lidar_front < 0.60) {
-      // Approaching obstacle confirmed by LiDAR: ToF provides early low-profile alert
+    } else if (lidar_front < 0.45 && tof_range_ < obstacle_dist_) {
+      // Approaching barrier corroborated by LiDAR
       tof_is_real_obstacle = true;
     }
   }
@@ -702,7 +765,12 @@ void SimpleExplorer::controlLoop()
       last_stall_x_ = curr_x_;
       last_stall_y_ = curr_y_;
       forward_motion_start_time_ = now;
-      turn_direction_ = optimal_escape_dir;
+      // If repeatedly stalling in one direction, flip turn direction to escape the corner!
+      if (stall_count_ >= 2) {
+        turn_direction_ = (turn_direction_ > 0.0) ? -1.0 : 1.0;
+      } else {
+        turn_direction_ = optimal_escape_dir;
+      }
       cmd.linear.x = 0.0;
       cmd.angular.z = turn_direction_ * angular_speed_;
     }
@@ -722,15 +790,16 @@ void SimpleExplorer::controlLoop()
       last_stall_y_ = curr_y_;
       cmd.linear.x = -0.10;
       cmd.angular.z = 0.0;
-    } else if (rotate_dur >= 1.0 && front >= clear_dist_ && front_left >= 0.25 && front_right >= 0.25) {
+    } else if (rotate_dur >= 0.8 && front >= clear_dist_ && front_left >= 0.22 && front_right >= 0.22) {
       // Path clear on BOTH LiDAR and ToF (> clear_dist_) with flank clearance!
-      // Resume exploration with a 1.8s forward commitment to cruise clear of the obstacle
+      // Resume exploration with a 1.5s forward commitment to cruise clear of the obstacle
       state_ = ExplorerState::FRONTIER_SEEK;
-      commit_forward_until_ = now + 1.8;
+      commit_forward_until_ = now + 1.5;
       forward_motion_start_time_ = now;
       last_stall_check_time_ = now;
       last_stall_x_ = curr_x_;
       last_stall_y_ = curr_y_;
+      stall_count_ = 0;  // Reset stall count upon successful clearance!
       cmd.linear.x = linear_speed_;
       cmd.angular.z = 0.0;
     } else {
@@ -742,9 +811,9 @@ void SimpleExplorer::controlLoop()
   // =========================================================================
   // 3. CRITICAL / NEAR OBSTACLE DETECTION (Checked during forward motion)
   // =========================================================================
-  else if (front < critical_dist_ || front_left < 0.26 || front_right < 0.26) {
-    if (front < 0.24 || front_left < 0.24 || front_right < 0.24) {
-      // Very close to barrier (<24cm): Reverse first to clear bumper arc before pivoting
+  else if (front < critical_dist_ || front_left < 0.22 || front_right < 0.22) {
+    if (front < 0.18) {
+      // Very close to barrier (<18cm): Reverse first to clear bumper arc before pivoting
       state_ = ExplorerState::REVERSE;
       reverse_start_time_ = now;
       cmd.linear.x = -0.10;
@@ -758,27 +827,106 @@ void SimpleExplorer::controlLoop()
     }
   }
   // =========================================================================
-  // 4. PREDICTIVE OBSTACLE DETECTION (LiDAR or ToF < obstacle_dist_)
+  // 4. PREDICTIVE CURVE AVOIDANCE (LiDAR or ToF < obstacle_dist_)
   // =========================================================================
-  else if (front < obstacle_dist_) {
-    // Local obstacle detected ahead: pivot cleanly away to route around it
-    state_ = ExplorerState::ROTATE;
-    rotate_start_time_ = now;
-    turn_direction_ = optimal_escape_dir;
-    cmd.linear.x = 0.0;
-    cmd.angular.z = turn_direction_ * angular_speed_;
+  else if (front < obstacle_dist_ || front_left < 0.25 || front_right < 0.25) {
+    if (state_ != ExplorerState::CURVE) {
+      state_ = ExplorerState::CURVE;
+      curve_start_time_ = now;
+    } else if ((now - curve_start_time_) > 2.5) {
+      // Curving did not clear obstacle within 2.5s: halt and pivot in place
+      state_ = ExplorerState::ROTATE;
+      rotate_start_time_ = now;
+      turn_direction_ = optimal_escape_dir;
+      cmd.linear.x = 0.0;
+      cmd.angular.z = turn_direction_ * angular_speed_;
+      cmd_pub_->publish(cmd);
+      return;
+    }
+
+    // Continuous smooth curve avoidance around obstacles
+    cmd.linear.x = 0.08;
+    if (front_left < front_right || left < right) {
+      cmd.angular.z = -0.35;  // Decisive curve right
+      turn_direction_ = -1.0;
+    } else {
+      cmd.angular.z = 0.35;   // Decisive curve left
+      turn_direction_ = 1.0;
+    }
   }
   // =========================================================================
   // 5. FRONTIER SEEKING & COMPLETE ROOM SYSTEMATIC EXPLORATION
   // =========================================================================
   else {
     if (all_frontiers_explored_) {
-      // 100% of Room Boundaries & Interior Fully Explored!
-      cmd.linear.x = 0.0;
-      cmd.angular.z = 0.0;
-      if (log_count_ % 30 == 0) {
-        RCLCPP_INFO(this->get_logger(),
-                    "=== [ROOM EXPLORATION COMPLETE] 100%% of frontiers mapped with zero stucking ===");
+      state_ = ExplorerState::RETURN_TO_START;
+
+      if (has_initial_pose_) {
+        double dist_to_start = std::hypot(initial_x_ - curr_x_, initial_y_ - curr_y_);
+
+        if (!reached_start_pos_) {
+          if (dist_to_start <= 0.15) {
+            reached_start_pos_ = true;
+            cmd.linear.x = 0.0;
+            cmd.angular.z = 0.0;
+            RCLCPP_INFO(this->get_logger(),
+                        "=== [RETURN TO START] Reached start position (dist=%.2fm). Aligning to initial heading (%.1f deg)... ===",
+                        dist_to_start, initial_yaw_ * 180.0 / M_PI);
+          } else {
+            // Find lowest index breadcrumb (closest to start) that has line of sight
+            double target_x = initial_x_;
+            double target_y = initial_y_;
+
+            if (isPathObstructed(curr_x_, curr_y_, initial_x_, initial_y_)) {
+              for (size_t i = 0; i < breadcrumbs_.size(); ++i) {
+                if (!isPathObstructed(curr_x_, curr_y_, breadcrumbs_[i].first, breadcrumbs_[i].second)) {
+                  target_x = breadcrumbs_[i].first;
+                  target_y = breadcrumbs_[i].second;
+                  break;
+                }
+              }
+            }
+
+            double goal_angle = std::atan2(target_y - curr_y_, target_x - curr_x_);
+            double heading_err = std::atan2(std::sin(goal_angle - curr_yaw_),
+                                            std::cos(goal_angle - curr_yaw_));
+
+            if (std::abs(heading_err) > 0.50) {
+              // Heading error > 28°: Turn in-place towards target
+              cmd.linear.x = 0.0;
+              cmd.angular.z = (heading_err > 0.0) ? angular_speed_ : -angular_speed_;
+            } else {
+              // Forward cruising with smooth proportional deceleration as robot nears initial pose
+              double target_dist = std::hypot(target_x - curr_x_, target_y - curr_y_);
+              double speed = std::clamp(target_dist * 0.75, 0.06, linear_speed_);
+              cmd.linear.x = speed * std::max(0.4, std::cos(heading_err));
+              cmd.angular.z = std::clamp(0.8 * heading_err, -0.25, 0.25);
+            }
+          }
+        }
+
+        if (reached_start_pos_) {
+          // Step 2: Align with the exact initial starting direction!
+          double yaw_err = std::atan2(std::sin(initial_yaw_ - curr_yaw_),
+                                      std::cos(initial_yaw_ - curr_yaw_));
+
+          if (std::abs(yaw_err) > 0.15) {  // ~8.6 degrees deadband (prevents rapid limit-cycle oscillation)
+            cmd.linear.x = 0.0;
+            cmd.angular.z = (yaw_err > 0.0) ? 0.25 : -0.25;
+          } else {
+            reached_initial_heading_ = true;
+            cmd.linear.x = 0.0;
+            cmd.angular.z = 0.0;
+            if (log_count_ % 30 == 0) {
+              RCLCPP_INFO(this->get_logger(),
+                          "=== [MAPPING COMPLETE & AT START] Robot returned to initial start pose (%.2f, %.2f) at orientation %.1f deg! ===",
+                          initial_x_, initial_y_, initial_yaw_ * 180.0 / M_PI);
+            }
+          }
+        }
+      } else {
+        cmd.linear.x = 0.0;
+        cmd.angular.z = 0.0;
       }
     } else if (now < commit_forward_until_ && front > critical_dist_) {
       // Post-avoidance forward commitment: cruise forward through open clearance corridor
@@ -794,26 +942,15 @@ void SimpleExplorer::controlLoop()
       double heading_err = std::atan2(std::sin(goal_angle - curr_yaw_),
                                       std::cos(goal_angle - curr_yaw_));
 
-      if (std::abs(heading_err) > 0.90) {
-        // Large heading error > 52°: Crisp in-place pivot with differential torque
+      if (std::abs(heading_err) > 0.60) {
+        // Heading error > 34°: In-place turn to face target
         cmd.linear.x = 0.0;
         cmd.angular.z = (heading_err > 0.0) ? angular_speed_ : -angular_speed_;
       } else {
-        // Continuous smooth curved pursuit towards target frontier:
-        double heading_cos = std::max(0.25, std::cos(heading_err));
-        double clearance_scale = std::clamp((front - critical_dist_) / (obstacle_dist_ - critical_dist_), 0.4, 1.0);
-        cmd.linear.x = linear_speed_ * clearance_scale * heading_cos;
-
-        // Side repulsive bias if grazing obstacles on left or right flanks:
-        double side_bias = 0.0;
-        if (front_left < 0.30) {
-          side_bias -= 0.15 * (0.30 - front_left) / 0.10;
-        }
-        if (front_right < 0.30) {
-          side_bias += 0.15 * (0.30 - front_right) / 0.10;
-        }
-
-        cmd.angular.z = std::clamp(1.2 * heading_err + side_bias, -angular_speed_, angular_speed_);
+        // Aligned within ±34°: Cruise forward towards frontier while fine-tuning heading
+        double heading_cos = std::cos(heading_err);
+        cmd.linear.x = linear_speed_ * std::max(0.4, heading_cos);
+        cmd.angular.z = std::clamp(1.0 * heading_err, -0.30, 0.30);
       }
     } else {
       // No active frontier yet (or initial room discovery): systematic wall following
@@ -836,7 +973,8 @@ void SimpleExplorer::controlLoop()
   // 6. PHYSICAL ANTI-STALL GUARDIAN (Layer 2 Safe)
   // =========================================================================
   // Layer 2A: Forward Translational Cruising Stall
-  if ((state_ == ExplorerState::FRONTIER_SEEK || state_ == ExplorerState::WALL_FOLLOW)
+  if ((state_ == ExplorerState::FRONTIER_SEEK || state_ == ExplorerState::WALL_FOLLOW ||
+       state_ == ExplorerState::RETURN_TO_START || state_ == ExplorerState::CURVE)
       && cmd.linear.x >= 0.05) {
     if ((now - forward_motion_start_time_) >= 2.5) {
       if ((now - last_stall_check_time_) >= 2.5) {
@@ -845,14 +983,13 @@ void SimpleExplorer::controlLoop()
         last_stall_x_ = curr_x_;
         last_stall_y_ = curr_y_;
 
-        // At 0.12 m/s, robot should cover ~0.30m in 2.5s. If < 0.025m or near a wall (<0.30m):
-        // prevent wheel-slip against walls from distorting SLAM odometry!
-        bool wall_contact = (front < 0.30 || front_left < 0.26 || front_right < 0.26);
-        if (dist < 0.025 || wall_contact) {
+        // At 0.08-0.12 m/s, robot should cover ~0.20-0.30m in 2.5s. If < 0.025m, robot is physically wedged/stalled!
+        // (Only trigger on actual translational stall, never falsely during normal wall following)
+        if (dist < 0.025) {
           stall_count_++;
           RCLCPP_WARN(this->get_logger(),
-                      "[Anti-Stall Guardian] Wall barrier contact / stall (dist=%.1fcm, front=%.2fm)! Escaping #%u",
-                      dist * 100.0, front, stall_count_);
+                      "[Anti-Stall Guardian] Physical obstacle wedged (%.1fcm in 2.5s)! Escaping #%u",
+                      dist * 100.0, stall_count_);
           state_ = ExplorerState::REVERSE;
           reverse_start_time_ = now;
           turn_direction_ = (left > right) ? 1.0 : -1.0;
@@ -867,7 +1004,7 @@ void SimpleExplorer::controlLoop()
         }
       }
     }
-  } else if (state_ != ExplorerState::REVERSE) {
+  } else if (state_ != ExplorerState::REVERSE && state_ != ExplorerState::CURVE) {
     // When pivoting in place or aligning, reset translational stall baseline
     last_stall_check_time_ = now;
     last_stall_x_ = curr_x_;
@@ -875,8 +1012,8 @@ void SimpleExplorer::controlLoop()
     forward_motion_start_time_ = now;
   }
 
-  // Layer 2B: Rotational In-Place Pivot Stall
-  if (std::abs(cmd.linear.x) < 0.02 && std::abs(cmd.angular.z) >= 0.20) {
+  // Layer 2B: Rotational In-Place Pivot Stall (strictly when commanded to pivot in place)
+  if (std::abs(cmd.linear.x) < 0.02 && std::abs(cmd.angular.z) >= 0.20 && state_ == ExplorerState::ROTATE) {
     if ((now - last_rot_stall_check_time_) >= 2.5) {
       double d_yaw = std::abs(std::atan2(std::sin(curr_yaw_ - last_rot_stall_yaw_),
                                          std::cos(curr_yaw_ - last_rot_stall_yaw_)));
@@ -904,7 +1041,8 @@ void SimpleExplorer::controlLoop()
     const char * st_str = (state_ == ExplorerState::FRONTIER_SEEK) ? "FRONTIER_SEEK" :
                           (state_ == ExplorerState::WALL_FOLLOW)   ? "WALL_FOLLOW" :
                           (state_ == ExplorerState::CURVE)         ? "CURVE" :
-                          (state_ == ExplorerState::ROTATE)        ? "ROTATE" : "REVERSE";
+                          (state_ == ExplorerState::ROTATE)        ? "ROTATE" :
+                          (state_ == ExplorerState::RETURN_TO_START) ? "RETURN_TO_START" : "REVERSE";
     RCLCPP_INFO(this->get_logger(),
                 "[%s] clusters=%zu target=(%.2f, %.2f) front=%.2fm ToF=%.2fm -> lin=%.2f ang=%.2f",
                 st_str, frontier_clusters_.size(),

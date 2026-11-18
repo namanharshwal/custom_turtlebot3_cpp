@@ -65,7 +65,7 @@ void VL53L0XNode::declareParameters()
   this->declare_parameter<int>("i2c_address", 0x29);
   this->declare_parameter<std::string>("frame_id", "tof_link");
   this->declare_parameter<double>("min_range", 0.03);      // 3 cm minimum
-  this->declare_parameter<double>("max_range", 0.60);      // 60 cm calibrated maximum (bounds ToF to bumper blindspot)
+  this->declare_parameter<double>("max_range", 0.45);      // 45 cm calibrated maximum (bounds ToF strictly to bumper collision field)
   this->declare_parameter<double>("field_of_view", 0.4363); // 25° conical cone
   this->declare_parameter<double>("publish_rate", 20.0);   // 20 Hz update rate
 

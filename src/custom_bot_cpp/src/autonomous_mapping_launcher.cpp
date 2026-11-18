@@ -81,7 +81,7 @@ int main(int argc, char ** argv)
     "-p", "frequency:=10.0",
     "-p", "angle_max:=180.0",
     "-p", "angle_min:=-180.0",
-    "-p", "range_max:=8.0",
+    "-p", "range_max:=6.0",
     "-p", "range_min:=0.15",
     "-p", "resolution_fixed:=true",
     "-p", "auto_reconnect:=true",
@@ -113,12 +113,12 @@ int main(int argc, char ** argv)
     "-p", "i2c_address:=41",
     "-p", "frame_id:=tof_link",
     "-p", "min_range:=0.03",
-    "-p", "max_range:=0.60",
+    "-p", "max_range:=0.45",
     "-p", "field_of_view:=0.4363",
     "-p", "publish_rate:=20.0"
   }, 2);
 
-  // 4. Object Detector Node (Camera & YOLOv4-tiny live feedback in RViz2, delayed 3s)
+  // 4. Object Detector Node (Camera & Object Detection live feedback in RViz2, delayed 3s)
   if (access("/dev/video0", F_OK) == 0) {
     launcher.spawnDelayed("object_detector_node", {
       "ros2", "run", "custom_bot_cpp", "object_detector_node",
@@ -127,10 +127,10 @@ int main(int argc, char ** argv)
       "-p", "capture_width:=640",
       "-p", "capture_height:=480",
       "-p", "input_size:=320",
-      "-p", "conf_threshold:=0.20",
+      "-p", "conf_threshold:=0.25",
       "-p", "nms_threshold:=0.40",
-      "-p", "detection_rate_hz:=1.5",
-      "-p", "publish_rate_hz:=10.0",
+      "-p", "detection_rate_hz:=1.0",
+      "-p", "publish_rate_hz:=6.0",
       "-p", "publish_raw_image:=true",
       "-p", "analogue_gain:=350",
       "-p", "exposure:=1200"
@@ -148,7 +148,7 @@ int main(int argc, char ** argv)
   // 6. RViz2 (delayed 7s)
   launcher.spawnDelayed("rviz2", {
     "bash", "-c",
-    "source /opt/ros/humble/setup.bash && source /home/ps/psnh_turtlebot_cpp_ws/install/setup.bash && export DISPLAY=:1 && exec rviz2 -d " + rviz_config
+    "source /opt/ros/humble/setup.bash && source /home/ps/psnh_turtlebot_cpp_ws/install/setup.bash && export DISPLAY=:1 && export XAUTHORITY=/home/ps/.Xauthority && exec rviz2 -d " + rviz_config
   }, 7);
 
   // 7. Simple Explorer (delayed 10s to let SLAM establish initial map)
@@ -156,10 +156,10 @@ int main(int argc, char ** argv)
     "ros2", "run", "custom_bot_cpp", "simple_explorer",
     "--ros-args",
     "-p", "linear_speed:=0.12",
-    "-p", "angular_speed:=0.40",
-    "-p", "obstacle_dist:=0.40",
+    "-p", "angular_speed:=0.35",
+    "-p", "obstacle_dist:=0.38",
     "-p", "critical_dist:=0.25",
-    "-p", "clear_dist:=0.48",
+    "-p", "clear_dist:=0.42",
     "-p", "wall_follow_dist:=0.38",
     "-p", "control_hz:=10.0"
   }, 10);

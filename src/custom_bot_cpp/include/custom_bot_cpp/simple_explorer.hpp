@@ -48,7 +48,8 @@ enum class ExplorerState
   WALL_FOLLOW,
   CURVE,
   ROTATE,
-  REVERSE
+  REVERSE,
+  RETURN_TO_START
 };
 
 struct FrontierPoint
@@ -108,6 +109,7 @@ private:
   double turn_direction_{1.0};
   double rotate_start_time_{0.0};
   double reverse_start_time_{0.0};
+  double curve_start_time_{0.0};
   double forward_motion_start_time_{0.0};
   double last_state_change_{0.0};
   uint64_t log_count_{0};
@@ -135,6 +137,21 @@ private:
   double curr_y_{0.0};
   double curr_yaw_{0.0};
   bool has_pose_{false};
+
+  // Initial Start Pose & Return to Home Navigation
+  double initial_x_{0.0};
+  double initial_y_{0.0};
+  double initial_yaw_{0.0};
+  bool has_initial_pose_{false};
+  bool reached_start_pos_{false};
+  bool reached_initial_heading_{false};
+  std::vector<std::pair<double, double>> breadcrumbs_;
+  uint32_t no_frontiers_count_{0};
+  double exploration_start_time_{0.0};
+  double total_distance_traveled_{0.0};
+  double prev_pose_x_{0.0};
+  double prev_pose_y_{0.0};
+  bool first_pose_{true};
 
   // Odometry Stall Monitoring (Physical Guardian)
   double last_stall_check_time_{0.0};
