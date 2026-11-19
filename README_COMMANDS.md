@@ -1,66 +1,34 @@
-# 🤖 Custom TurtleBot Burger 2.0 — Master Command & Operations Manual
-### Complete Operational Reference for Both Workspaces (C++ & Python)
+# 🤖 TurtleBot Burger 2.0 — Sequential Terminal Commands Guide
+### Terminal-by-Terminal Execution Guide for C++ and Python Packages
 
 ---
 
-## 👨‍💻 Authorship & Repository Metadata
+## 🛑 Step 0: Emergency Stop & Process Cleanup (Run Before Starting)
 
-* **Author, Creator & Lead Maintainer:** **Naman Harshwal** ([@namanharshwal](https://github.com/namanharshwal) | `namanharshwal@gmail.com`)
-* **Project Owner / Supervisor:** **Pradeep Singh Chauhan** (`ps@robot.com`)
-* **Platform:** Raspberry Pi 4B (2GB RAM) + Arduino UNO R3 + Bosch BNO055 IMU + YDLidar X2 + VL53L0X ToF + OV5647 CSI Camera
-* **OS / Framework:** Ubuntu 22.04 LTS / ROS 2 Humble Hawksbill
-* **GUI / VNC Display:** Display `:1` (TigerVNC Server running at resolution `1920x1080`)
-* **Repositories:**
-  * **C++ Package (Recommended / Golden Standard):** [custom_turtlebot3_cpp](https://github.com/namanharshwal/custom_turtlebot3_cpp.git) — Path: `/home/ps/psnh_turtlebot_cpp_ws`
-  * **Python Package:** [nammy_ps_turtlebot3](https://github.com/namanharshwal/nammy_ps_turtlebot3.git) — Path: `/home/ps/psnh_turtlebot_ws`
+Run these two commands whenever you need to stop the robot or reset before launching a new mode:
 
----
-
-## ⚠️ Critical Ground Rules & Safety Constraints
-
-> [!CAUTION]
-> **NEVER KILL OR RESTART TIGERVNC (DISPLAY `:1`):**
-> * Never run `vncserver -kill :1`, `systemctl restart vnc*`, `killall Xvnc`, or delete `/tmp/.X1-lock` / `/tmp/.X11-unix/X1`.
-> * The live GUI is constantly monitored via VNC on `:1`. Always launch RViz2 and graphical tools with:
->   ```bash
->   export DISPLAY=:1
->   export XAUTHORITY=/home/ps/.Xauthority
->   ```
-
-> [!WARNING]
-> **SINGLE ACTIVE CONTROLLER RULE:**
-> * Never run both C++ and Python packages simultaneously. Both packages access the same hardware serial port (`/dev/ttyAMA0`), LiDAR (`/dev/ydlidar`), and I2C bus (`/dev/i2c-1`). Always stop all running nodes before switching stacks.
-
----
-
-## 🛑 Step 0: Emergency Stop & Process Cleanup
-
-Before starting any new mapping or navigation session, run this clean-up routine to release serial ports and stop motor actuation.
-
-### 1. Stop Robot Motors Immediately (Emergency Brake)
+### 1. Emergency Motor Stop (Immediate Hardware Brake)
 ```bash
-python3 -c "import serial, time; s = serial.Serial('/dev/ttyAMA0', 115200, timeout=0.5); s.write(b'STOP\n'); s.flush(); time.sleep(0.1); s.close(); print('Motors STOPPED successfully.')"
+python3 -c "import serial, time; s = serial.Serial('/dev/ttyAMA0', 115200, timeout=0.5); s.write(b'STOP\n'); s.flush(); time.sleep(0.1); s.close(); print('Motors STOPPED.')"
 ```
 
-### 2. Kill All Active ROS 2 Robot Processes (Safe for TigerVNC)
+### 2. Kill All ROS Nodes (Safe for TigerVNC GUI)
 ```bash
 pkill -9 -f "ros2|simple_explorer|arduino_bridge|ydlidar|slam_toolbox|object_detector|rviz2|nav2" || true
 ```
 
-### 3. Verify Hardware Devices Are Free
-```bash
-fuser /dev/ttyAMA0 || echo "Serial port /dev/ttyAMA0 is FREE"
-fuser /dev/ydlidar || echo "LiDAR port /dev/ydlidar is FREE"
-```
+---
+
+## ⚡ SECTION 1: Pure C++ Package (`custom_turtlebot3_cpp`)
+> **Workspace:** `/home/ps/psnh_turtlebot_cpp_ws`  
+> **Package:** `custom_bot_cpp`  
+> **Key Features:** Zero Python latency, POSIX raw UART, Ceres scan matching, high precision.
 
 ---
 
-## 🚀 SECTION 1: Pure C++17 Package (`custom_turtlebot3_cpp`)
+### 🔨 Phase 1: Build & Environment Setup
+Execute this in your terminal before running any C++ nodes:
 
-> **Workspace Path:** `/home/ps/psnh_turtlebot_cpp_ws`  
-> **Key Advantage:** Zero Python runtime overhead, POSIX raw termios non-blocking serial (0.1ms latency), Ceres scan-matching graph SLAM, no line-buffering lag, crisp distortion-free 90° maps.
-
-### 🛠️ 1. Build and Sourcing
 ```bash
 cd /home/ps/psnh_turtlebot_cpp_ws
 colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release
@@ -70,87 +38,150 @@ source /home/ps/psnh_turtlebot_cpp_ws/install/setup.bash
 
 ---
 
-### 🗺️ 2. Autonomous Mapping (Golden Standard - One Command)
-Orchestrates hardware bringup, YDLidar, IMU-fused Arduino bridge, VL53L0X ToF, SLAM Toolbox, RViz2 on Display `:1`, and Simple Explorer with frontier pursuit and stall recovery.
+### 🗺️ Mode A: Autonomous Mapping (C++)
+
+#### Option 1: Master Orchestrator (Single Terminal — Recommended)
+This single command automatically starts the hardware, SLAM, RViz2 on VNC Display `:1`, and the autonomous frontier explorer in timed sequence:
 
 ```bash
-bash -c "source /opt/ros/humble/setup.bash && source /home/ps/psnh_turtlebot_cpp_ws/install/setup.bash && export DISPLAY=:1 && export XAUTHORITY=/home/ps/.Xauthority && exec ros2 run custom_bot_cpp autonomous_mapping_launcher"
+source /opt/ros/humble/setup.bash
+source /home/ps/psnh_turtlebot_cpp_ws/install/setup.bash
+export DISPLAY=:1
+export XAUTHORITY=/home/ps/.Xauthority
+ros2 run custom_bot_cpp autonomous_mapping_launcher
 ```
 
-* **Staging sequence:**
-  * `t = 0s`: `robot_state_publisher` + `ydlidar_ros2_driver_node`
-  * `t = 2s`: `arduino_bridge` (ticks: 412L/440R, crawl PWM: 92L/98R) + `vl53l0x_node`
-  * `t = 3s`: `object_detector_node` (Camera & YOLOv4-tiny)
-  * `t = 5s`: `slam_toolbox` (Ceres scan matching)
-  * `t = 7s`: `rviz2` on Display `:1`
-  * `t = 10s`: `simple_explorer` (Yamauchi frontier detection & anti-stall)
+#### Option 2: Terminal-by-Terminal Modular Execution
+
+* **Terminal 1 — Hardware Bringup (URDF + LiDAR + Motor Bridge + ToF + Camera):**
+  ```bash
+  source /opt/ros/humble/setup.bash
+  source /home/ps/psnh_turtlebot_cpp_ws/install/setup.bash
+  ros2 run custom_bot_cpp robot_full_launcher
+  ```
+
+* **Terminal 2 — SLAM Toolbox (Real-Time Graph Mapping):**
+  ```bash
+  source /opt/ros/humble/setup.bash
+  source /home/ps/psnh_turtlebot_cpp_ws/install/setup.bash
+  ros2 run custom_bot_cpp slam_launcher
+  ```
+
+* **Terminal 3 — RViz2 Visualizer (Display `:1`):**
+  ```bash
+  source /opt/ros/humble/setup.bash
+  source /home/ps/psnh_turtlebot_cpp_ws/install/setup.bash
+  export DISPLAY=:1
+  export XAUTHORITY=/home/ps/.Xauthority
+  rviz2 -d /home/ps/psnh_turtlebot_cpp_ws/install/custom_bot_cpp/share/custom_bot_cpp/config/mapping.rviz
+  ```
+
+* **Terminal 4 — Autonomous Frontier Explorer:**
+  ```bash
+  source /opt/ros/humble/setup.bash
+  source /home/ps/psnh_turtlebot_cpp_ws/install/setup.bash
+  ros2 run custom_bot_cpp simple_explorer
+  ```
 
 ---
 
-### 🧭 3. Autonomous Nav2 Navigation (Using Saved Map)
-Launches full hardware stack, Nav2 stack with AMCL particle filter localization, costmaps, planner/controller servers, and RViz2 navigation UI on Display `:1`.
+### 🕹️ Mode B: Manual Mapping with Teleoperation (C++)
 
-```bash
-# With default room map:
-bash -c "source /opt/ros/humble/setup.bash && source /home/ps/psnh_turtlebot_cpp_ws/install/setup.bash && export DISPLAY=:1 && export XAUTHORITY=/home/ps/.Xauthority && exec ros2 run custom_bot_cpp full_navigation_launcher"
+* **Terminal 1 — Hardware Bringup:**
+  ```bash
+  source /opt/ros/humble/setup.bash
+  source /home/ps/psnh_turtlebot_cpp_ws/install/setup.bash
+  ros2 run custom_bot_cpp robot_full_launcher
+  ```
 
-# Or with a custom saved map:
-bash -c "source /opt/ros/humble/setup.bash && source /home/ps/psnh_turtlebot_cpp_ws/install/setup.bash && export DISPLAY=:1 && export XAUTHORITY=/home/ps/.Xauthority && exec ros2 run custom_bot_cpp full_navigation_launcher --map=/home/ps/Desktop/my_map.yaml"
-```
+* **Terminal 2 — SLAM Toolbox:**
+  ```bash
+  source /opt/ros/humble/setup.bash
+  source /home/ps/psnh_turtlebot_cpp_ws/install/setup.bash
+  ros2 run custom_bot_cpp slam_launcher
+  ```
 
----
+* **Terminal 3 — RViz2 Visualizer (Display `:1`):**
+  ```bash
+  source /opt/ros/humble/setup.bash
+  source /home/ps/psnh_turtlebot_cpp_ws/install/setup.bash
+  export DISPLAY=:1
+  export XAUTHORITY=/home/ps/.Xauthority
+  rviz2 -d /home/ps/psnh_turtlebot_cpp_ws/install/custom_bot_cpp/share/custom_bot_cpp/config/mapping.rviz
+  ```
 
-### 🕹️ 4. Manual SLAM Mapping (Keyboard Driven)
-
-#### Terminal 1: Hardware Stack Bringup
-```bash
-bash -c "source /opt/ros/humble/setup.bash && source /home/ps/psnh_turtlebot_cpp_ws/install/setup.bash && exec ros2 run custom_bot_cpp robot_full_launcher"
-```
-
-#### Terminal 2: SLAM Toolbox Launcher
-```bash
-bash -c "source /opt/ros/humble/setup.bash && source /home/ps/psnh_turtlebot_cpp_ws/install/setup.bash && exec ros2 run custom_bot_cpp slam_launcher"
-```
-
-#### Terminal 3: RViz2 Visualization (Display `:1`)
-```bash
-bash -c "source /opt/ros/humble/setup.bash && source /home/ps/psnh_turtlebot_cpp_ws/install/setup.bash && export DISPLAY=:1 && export XAUTHORITY=/home/ps/.Xauthority && exec rviz2 -d /home/ps/psnh_turtlebot_cpp_ws/install/custom_bot_cpp/share/custom_bot_cpp/config/mapping.rviz"
-```
-
-#### Terminal 4: Smooth Keyboard Teleoperation (Deadman Hold-to-Move)
-```bash
-bash -c "source /opt/ros/humble/setup.bash && source /home/ps/psnh_turtlebot_cpp_ws/install/setup.bash && exec ros2 run custom_bot_cpp teleop_key_hold"
-```
+* **Terminal 4 — Keyboard Teleoperation (Hold key to move, release to stop):**
+  ```bash
+  source /opt/ros/humble/setup.bash
+  source /home/ps/psnh_turtlebot_cpp_ws/install/setup.bash
+  ros2 run custom_bot_cpp teleop_key_hold
+  ```
 
 ---
 
-### ⚡ 5. Additional C++ Utilities & Nodes
+### 🧭 Mode C: Autonomous Navigation with Saved Map (C++)
 
-#### 3D Autonomous Docking Station Visualizer
-Publishes charging dock geometry and chevrons on `/docking_station/marker`:
+#### Option 1: Master Orchestrator (Single Terminal — Recommended)
 ```bash
-ros2 run custom_bot_cpp docking_station_visualizer --ros-args -p dock_x:=0.0 -p dock_y:=0.0 -p dock_yaw:=0.0
+source /opt/ros/humble/setup.bash
+source /home/ps/psnh_turtlebot_cpp_ws/install/setup.bash
+export DISPLAY=:1
+export XAUTHORITY=/home/ps/.Xauthority
+ros2 run custom_bot_cpp full_navigation_launcher
 ```
+*(To use a custom map file: add `--map=/home/ps/Desktop/my_map.yaml` at the end)*
 
-#### Autonomous Waypoint Sequence Follower (Nav2 Action Client)
-Commands the robot through pre-programmed inspection waypoints:
-```bash
-ros2 run custom_bot_cpp waypoint_navigator
-```
+#### Option 2: Terminal-by-Terminal Modular Execution
 
-#### Standalone VL53L0X C++ Driver (I2C 0x29)
-```bash
-ros2 run vl53l0x_sensor_cpp vl53l0x_node --ros-args -p i2c_bus:=1 -p i2c_address:=41 -p max_range:=0.45
-```
+* **Terminal 1 — Hardware Bringup:**
+  ```bash
+  source /opt/ros/humble/setup.bash
+  source /home/ps/psnh_turtlebot_cpp_ws/install/setup.bash
+  ros2 run custom_bot_cpp robot_full_launcher
+  ```
+
+* **Terminal 2 — Nav2 Navigation Stack (AMCL + Costmaps + Planners):**
+  ```bash
+  source /opt/ros/humble/setup.bash
+  source /home/ps/psnh_turtlebot_cpp_ws/install/setup.bash
+  ros2 launch nav2_bringup bringup_launch.py use_sim_time:=false map:=/home/ps/psnh_turtlebot_cpp_ws/maps/room_map.yaml params_file:=/home/ps/psnh_turtlebot_cpp_ws/src/custom_bot_nav_cpp/config/nav2_params.yaml
+  ```
+
+* **Terminal 3 — RViz2 Navigation GUI (Display `:1`):**
+  ```bash
+  source /opt/ros/humble/setup.bash
+  source /home/ps/psnh_turtlebot_cpp_ws/install/setup.bash
+  export DISPLAY=:1
+  export XAUTHORITY=/home/ps/.Xauthority
+  rviz2 -d /home/ps/psnh_turtlebot_cpp_ws/install/custom_bot_cpp/share/custom_bot_cpp/config/nav2.rviz
+  ```
+
+* **Terminal 4 (Optional) — 3D Docking Station Visualizer:**
+  ```bash
+  source /opt/ros/humble/setup.bash
+  source /home/ps/psnh_turtlebot_cpp_ws/install/setup.bash
+  ros2 run custom_bot_cpp docking_station_visualizer
+  ```
+
+* **Terminal 5 (Optional) — Autonomous Waypoint Sequence Follower:**
+  ```bash
+  source /opt/ros/humble/setup.bash
+  source /home/ps/psnh_turtlebot_cpp_ws/install/setup.bash
+  ros2 run custom_bot_cpp waypoint_navigator
+  ```
 
 ---
 
 ## 🐍 SECTION 2: Python Package (`nammy_ps_turtlebot3`)
+> **Workspace:** `/home/ps/psnh_turtlebot_ws`  
+> **Package:** `custom_bot`  
+> **Key Features:** Standard ROS 2 launch files, Python dynamic configurations.
 
-> **Workspace Path:** `/home/ps/psnh_turtlebot_ws`  
-> **Key Features:** Standard ROS 2 launch system, dynamic parameters, Python ROS nodes.
+---
 
-### 🛠️ 1. Build and Sourcing
+### 🔨 Phase 1: Build & Environment Setup
+Execute this in your terminal before running Python nodes:
+
 ```bash
 cd /home/ps/psnh_turtlebot_ws
 colcon build --symlink-install
@@ -160,139 +191,131 @@ source /home/ps/psnh_turtlebot_ws/install/setup.bash
 
 ---
 
-### 🗺️ 2. Autonomous Mapping (One Command)
+### 🗺️ Mode A: Autonomous Mapping (Python)
+
+#### Option 1: Master Launch File (Single Terminal — Recommended)
 ```bash
-bash -c "source /opt/ros/humble/setup.bash && source /home/ps/psnh_turtlebot_ws/install/setup.bash && export DISPLAY=:1 && export XAUTHORITY=/home/ps/.Xauthority && exec ros2 launch custom_bot autonomous_mapping.launch.py"
-```
-
----
-
-### 🧭 3. Autonomous Nav2 Navigation
-```bash
-bash -c "source /opt/ros/humble/setup.bash && source /home/ps/psnh_turtlebot_ws/install/setup.bash && export DISPLAY=:1 && export XAUTHORITY=/home/ps/.Xauthority && exec ros2 launch custom_bot full_navigation.launch.py"
-```
-
----
-
-### 🕹️ 4. Manual SLAM Mapping & Hardware Bringup
-
-#### Full Hardware Bringup
-```bash
-ros2 launch custom_bot robot_full.launch.py
-```
-
-#### SLAM Toolbox + RViz2
-```bash
+source /opt/ros/humble/setup.bash
+source /home/ps/psnh_turtlebot_ws/install/setup.bash
 export DISPLAY=:1
 export XAUTHORITY=/home/ps/.Xauthority
-ros2 launch custom_bot mapping.launch.py
+ros2 launch custom_bot autonomous_mapping.launch.py
 ```
 
-#### Teleoperation (Hold-to-Move Deadman Switch)
-```bash
-ros2 run custom_bot teleop_key_hold.py
-```
+#### Option 2: Terminal-by-Terminal Modular Execution
+
+* **Terminal 1 — Hardware Bringup (LiDAR + Motor Bridge + ToF + Camera):**
+  ```bash
+  source /opt/ros/humble/setup.bash
+  source /home/ps/psnh_turtlebot_ws/install/setup.bash
+  ros2 launch custom_bot robot_full.launch.py
+  ```
+
+* **Terminal 2 — SLAM Toolbox & RViz2 (Display `:1`):**
+  ```bash
+  source /opt/ros/humble/setup.bash
+  source /home/ps/psnh_turtlebot_ws/install/setup.bash
+  export DISPLAY=:1
+  export XAUTHORITY=/home/ps/.Xauthority
+  ros2 launch custom_bot mapping.launch.py
+  ```
+
+* **Terminal 3 — Autonomous Frontier Explorer:**
+  ```bash
+  source /opt/ros/humble/setup.bash
+  source /home/ps/psnh_turtlebot_ws/install/setup.bash
+  ros2 run custom_bot simple_explorer.py
+  ```
 
 ---
 
-## 💾 SECTION 3: Saving, Inspecting & Exporting Maps
+### 🕹️ Mode B: Manual Mapping with Teleoperation (Python)
 
-### 1. Save Map Live While SLAM is Running
-Save the current occupancy grid directly to the Desktop:
+* **Terminal 1 — Hardware Bringup:**
+  ```bash
+  source /opt/ros/humble/setup.bash
+  source /home/ps/psnh_turtlebot_ws/install/setup.bash
+  ros2 launch custom_bot robot_full.launch.py
+  ```
+
+* **Terminal 2 — SLAM Toolbox & RViz2 (Display `:1`):**
+  ```bash
+  source /opt/ros/humble/setup.bash
+  source /home/ps/psnh_turtlebot_ws/install/setup.bash
+  export DISPLAY=:1
+  export XAUTHORITY=/home/ps/.Xauthority
+  ros2 launch custom_bot mapping.launch.py
+  ```
+
+* **Terminal 3 — Keyboard Teleoperation (Hold key to move, release to stop):**
+  ```bash
+  source /opt/ros/humble/setup.bash
+  source /home/ps/psnh_turtlebot_ws/install/setup.bash
+  ros2 run custom_bot teleop_key_hold.py
+  ```
+
+---
+
+### 🧭 Mode C: Autonomous Navigation with Saved Map (Python)
+
+#### Option 1: Master Launch File (Single Terminal — Recommended)
 ```bash
 source /opt/ros/humble/setup.bash
-ros2 run nav2_map_server map_saver_cli -f /home/ps/Desktop/my_office_map
-```
-*(This generates `/home/ps/Desktop/my_office_map.yaml` and `/home/ps/Desktop/my_office_map.pgm`)*
-
-### 2. Convert Saved PGM Map to PNG (For Viewing or Reports)
-```bash
-python3 -c "from PIL import Image; Image.open('/home/ps/Desktop/my_office_map.pgm').save('/home/ps/Desktop/my_office_map.png'); print('Converted to PNG!')"
+source /home/ps/psnh_turtlebot_ws/install/setup.bash
+export DISPLAY=:1
+export XAUTHORITY=/home/ps/.Xauthority
+ros2 launch custom_bot full_navigation.launch.py
 ```
 
-### 3. Capture Live RViz2 Desktop Screenshot
-Take a high-resolution screenshot of the TigerVNC display without interrupting any nodes:
-```bash
-DISPLAY=:1 import -window root /home/ps/Desktop/live_rviz_screenshot.png
-```
+#### Option 2: Terminal-by-Terminal Modular Execution
+
+* **Terminal 1 — Hardware Bringup:**
+  ```bash
+  source /opt/ros/humble/setup.bash
+  source /home/ps/psnh_turtlebot_ws/install/setup.bash
+  ros2 launch custom_bot robot_full.launch.py
+  ```
+
+* **Terminal 2 — Nav2 Navigation Stack with Map:**
+  ```bash
+  source /opt/ros/humble/setup.bash
+  source /home/ps/psnh_turtlebot_ws/install/setup.bash
+  ros2 launch custom_bot_nav custom_navigation.launch.py map:=/home/ps/psnh_turtlebot_ws/maps/room_map.yaml
+  ```
+
+* **Terminal 3 — RViz2 Navigation GUI (Display `:1`):**
+  ```bash
+  source /opt/ros/humble/setup.bash
+  source /home/ps/psnh_turtlebot_ws/install/setup.bash
+  export DISPLAY=:1
+  export XAUTHORITY=/home/ps/.Xauthority
+  rviz2 -d /home/ps/psnh_turtlebot_ws/src/custom_bot/config/mapping.rviz
+  ```
 
 ---
 
-## 🔍 SECTION 4: Diagnostics & Live Telemetry Verification
+## 💾 SECTION 3: Map Saving & Image Conversion
 
-### 1. Check Active Topics & Rates
+Open a new terminal while SLAM mapping is actively running:
+
+### 1. Save Map to Desktop
 ```bash
 source /opt/ros/humble/setup.bash
-ros2 topic list
-ros2 topic hz /scan          # Expected: ~10.0 Hz
-ros2 topic hz /odom          # Expected: ~20.0 Hz
-ros2 topic hz /tof/range     # Expected: ~20.0 Hz
-ros2 topic echo /odom --once # Prints current pose & covariance
+ros2 run nav2_map_server map_saver_cli -f /home/ps/Desktop/my_map
 ```
+*(Creates `/home/ps/Desktop/my_map.yaml` and `/home/ps/Desktop/my_map.pgm`)*
 
-### 2. Verify Coordinate Transform Tree (TF2)
+### 2. Convert Saved PGM Map to PNG Image
 ```bash
-# Check transform between map and base_footprint:
-ros2 run tf2_ros tf2_echo map base_footprint
-
-# Generate a visual PDF of the full transform hierarchy:
-ros2 run tf2_tools view_frames
-# (Generates frames.pdf in current directory)
-```
-
-### 3. Check Hardware Communication
-```bash
-# Test Arduino UART directly (baud 115200):
-python3 -c "import serial; s=serial.Serial('/dev/ttyAMA0', 115200, timeout=1); print('Arduino Response:', s.readline().decode('utf-8', errors='ignore')); s.close()"
-
-# Scan I2C bus for VL53L0X ToF (should show 0x29):
-i2cdetect -y 1
-
-# List CSI Camera Device:
-v4l2-ctl --list-devices
+python3 -c "from PIL import Image; Image.open('/home/ps/Desktop/my_map.pgm').save('/home/ps/Desktop/my_map.png'); print('Map converted to /home/ps/Desktop/my_map.png')"
 ```
 
 ---
 
-## 🔄 SECTION 5: Git Version Control & Syncing
+## 📸 SECTION 4: Live RViz2 Desktop Screenshot Capture
 
-### Python Package (`nammy_ps_turtlebot3`)
+Capture the current state of Display `:1` without touching TigerVNC:
+
 ```bash
-cd /home/ps/psnh_turtlebot_ws
-git status
-git pull origin main
-# To push changes:
-git add .
-git commit -m "Your commit message"
-git push origin main
+DISPLAY=:1 import -window root /home/ps/Desktop/live_rviz_capture.png
 ```
-
-### C++ Package (`custom_turtlebot3_cpp`)
-```bash
-cd /home/ps/psnh_turtlebot_cpp_ws
-git status
-git pull origin main
-# To push changes:
-git add .
-git commit -m "Your commit message"
-git push origin main
-```
-
----
-
-## 📋 SECTION 6: Parameter Tuning Quick Reference
-
-| Parameter | Location (C++ / Python) | Default Value | Notes |
-| :--- | :--- | :--- | :--- |
-| **Encoder Left CPR** | `arduino_bridge.cpp` / `robot_full.launch.py` | `412` | Calibrated for 65mm Rhino wheel on left motor |
-| **Encoder Right CPR** | `arduino_bridge.cpp` / `robot_full.launch.py` | `440` | Calibrated for 65mm Rhino wheel on right motor |
-| **Track Width (Separation)**| `arduino_bridge.cpp` / `robot_full.launch.py` | `0.150 m` | Calibrated effective turning center width |
-| **Crawl Speed PWM** | `arduino_bridge.cpp` / `arduino_bridge.py` | `(92, 98)` | Balanced differential crawl overcome carpet stiction |
-| **Laser Max Range** | `ydlidar_ros2_driver` / `robot_full` | `6.0 m` | Filters noisy specular reflections past 6 meters |
-| **ToF Max Range** | `vl53l0x_node.cpp` / `vl53l0x_node.py` | `0.45 m` | Bounded to ignore carpet grazing beyond 0.45m |
-| **Frontier Obstacle Dist** | `simple_explorer.cpp` / `simple_explorer.py` | `0.38 m` | Wall avoidance trigger distance |
-| **Critical Collision Dist** | `simple_explorer.cpp` / `simple_explorer.py` | `0.25 m` | Emergency reverse & spin threshold |
-
----
-
-*Document compiled on Linux / Raspberry Pi 4B (Humble Hawksbill). Stored at `/home/ps/Desktop/README_COMMANDS.md`.*
